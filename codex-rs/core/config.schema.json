@@ -776,6 +776,62 @@
       },
       "type": "object"
     },
+    "ExternalMcpAutoApprove": {
+      "description": "How to treat newly discovered external MCP servers when no consent decision has been recorded yet.",
+      "oneOf": [
+        {
+          "description": "Only auto-approve sources that are inherently trusted (currently `Own`).",
+          "enum": [
+            "trusted"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Auto-approve every discovered server without prompting.",
+          "enum": [
+            "all"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Never auto-approve. Even `Own` discoveries require explicit approve.",
+          "enum": [
+            "none"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "ExternalMcpDiscoveryToml": {
+      "additionalProperties": false,
+      "description": "Configuration for the external MCP discovery scan that runs at agent startup.",
+      "properties": {
+        "auto_approve": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ExternalMcpAutoApprove"
+            }
+          ],
+          "description": "Auto-approval policy for newly discovered servers."
+        },
+        "dedupe_by_content": {
+          "description": "Collapse two discovered entries that resolve to the same command/url.",
+          "type": "boolean"
+        },
+        "enabled": {
+          "description": "Master switch. When `false` Codex skips the entire scan.",
+          "type": "boolean"
+        },
+        "sources": {
+          "description": "Which sources to consult. `None` means all known sources are scanned.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "FeatureToml_for_AppsMcpPathOverrideConfigToml": {
       "anyOf": [
         {
@@ -4125,6 +4181,15 @@
     },
     "experimental_use_unified_exec_tool": {
       "type": "boolean"
+    },
+    "external_mcp_discovery": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ExternalMcpDiscoveryToml"
+        }
+      ],
+      "default": null,
+      "description": "External MCP discovery scan settings. When omitted, discovery stays disabled and Codex only loads servers from `[mcp_servers]` and plugin definitions."
     },
     "features": {
       "additionalProperties": false,

@@ -41,6 +41,7 @@ codex-feedback = { workspace = true }
 codex-login = { workspace = true }
 codex-memories-read = { workspace = true }
 codex-mcp = { workspace = true }
+codex-mcp-discovery = { workspace = true }
 codex-model-provider-info = { workspace = true }
 codex-models-manager = { workspace = true }
 codex-shell-command = { workspace = true }
