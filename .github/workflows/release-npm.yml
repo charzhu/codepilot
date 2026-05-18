@@ -18,7 +18,7 @@ jobs:
   build-windows-x64:
     name: Build Windows x64 npm tarballs
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
       contents: read
     outputs:
@@ -54,6 +54,11 @@ jobs:
       - name: Build native binaries
         shell: pwsh
         working-directory: codex-rs
+        env:
+          # The workspace release profile uses fat LTO and one codegen unit,
+          # which can exceed GitHub-hosted Windows runner time limits.
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
         run: |
           cargo build `
             --target x86_64-pc-windows-msvc `
