@@ -37,6 +37,7 @@ use codex_config::profile_toml::ConfigProfile;
 use codex_config::sandbox_mode_requirement_for_permission_profile;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
+use codex_config::types::ExternalMcpDiscoveryToml;
 use codex_config::types::History;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerDisabledReason;
@@ -752,6 +753,11 @@ pub struct Config {
     /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
     pub mcp_oauth_callback_url: Option<String>,
 
+    /// External MCP discovery settings parsed from the `external_mcp_discovery`
+    /// section of `config.toml`. The actual scan is run on demand from
+    /// `to_mcp_config`; this field only carries the resolved settings.
+    pub external_mcp_discovery: Option<ExternalMcpDiscoveryToml>,
+
     /// Combined provider map (defaults plus user-defined providers).
     pub model_providers: HashMap<String, ModelProviderInfo>,
 
@@ -1260,7 +1266,9 @@ impl Config {
     ) -> McpConfig {
         let plugins_input = self.plugins_config_input();
         let loaded_plugins = plugins_manager.plugins_for_config(&plugins_input).await;
+        let user_mcp_server_names: Vec<String> = self.mcp_servers.get().keys().cloned().collect();
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
+        let mut plugin_mcp_owners: BTreeMap<String, String> = BTreeMap::new();
         for plugin in loaded_plugins
             .plugins()
             .iter()
@@ -1273,15 +1281,37 @@ impl Config {
                 self.config_layer_stack.requirements().plugins.as_ref(),
             );
             for (name, plugin_server) in plugin_mcp_servers {
+                plugin_mcp_owners
+                    .entry(name.clone())
+                    .or_insert_with(|| format!("plugin:{}", plugin.config_name));
                 configured_mcp_servers.entry(name).or_insert(plugin_server);
             }
         }
+        let has_empty_mcp_allowlist = self
+            .config_layer_stack
+            .requirements()
+            .mcp_servers
+            .as_ref()
+            .is_some_and(|req| req.value.is_empty());
         if let Some(mcp_requirements) = self.config_layer_stack.requirements().mcp_servers.as_ref()
             && mcp_requirements.value.is_empty()
         {
             // A present empty allowlist bans configurable MCPs, including plugin MCPs merged
             // above.
             filter_mcp_servers_by_requirements(&mut configured_mcp_servers, Some(mcp_requirements));
+        }
+
+        // External MCP discovery: scan Claude / Copilot / VS Code / Agency
+        // configs so the user does not have to re-author every server in
+        // `[mcp_servers]`. The wiring helper lives in `codex-mcp-discovery`
+        // so this site stays a thin coordination call.
+        if !has_empty_mcp_allowlist {
+            apply_external_mcp_discovery(
+                self,
+                &user_mcp_server_names,
+                &plugin_mcp_owners,
+                &mut configured_mcp_servers,
+            );
         }
 
         McpConfig {
@@ -3338,6 +3368,7 @@ impl Config {
             ),
             mcp_oauth_callback_port: cfg.mcp_oauth_callback_port,
             mcp_oauth_callback_url: cfg.mcp_oauth_callback_url.clone(),
+            external_mcp_discovery: cfg.external_mcp_discovery.clone(),
             model_providers,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
             project_doc_fallback_filenames: cfg
@@ -3630,6 +3661,78 @@ pub fn find_codex_home() -> std::io::Result<AbsolutePathBuf> {
 /// that the directory exists.
 pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(cfg.log_dir.clone())
+}
+
+/// Run external MCP discovery and merge the resulting servers into
+/// `configured_mcp_servers`. The heavy lifting lives in
+/// [`codex_mcp_discovery::apply_discovery`]; this helper only assembles the
+/// reserved-name list and turns shadows into structured warnings.
+fn apply_external_mcp_discovery(
+    config: &Config,
+    user_mcp_server_names: &[String],
+    plugin_mcp_owners: &BTreeMap<String, String>,
+    configured_mcp_servers: &mut HashMap<String, McpServerConfig>,
+) {
+    let settings =
+        codex_mcp_discovery::DiscoverySettings::from_toml(config.external_mcp_discovery.as_ref());
+    if !settings.enabled {
+        return;
+    }
+
+    let env = codex_mcp_discovery::RealExternalMcpEnv::from_parts(
+        config.cwd.to_path_buf(),
+        dirs::home_dir(),
+        Some(config.codex_home.to_path_buf()),
+    );
+
+    let mut reserved: Vec<codex_mcp_discovery::ReservedName<'_>> = Vec::new();
+    for name in user_mcp_server_names {
+        reserved.push(codex_mcp_discovery::ReservedName {
+            name: name.as_str(),
+            owner: "config.toml",
+        });
+    }
+    for (name, owner) in plugin_mcp_owners {
+        reserved.push(codex_mcp_discovery::ReservedName {
+            name: name.as_str(),
+            owner: owner.as_str(),
+        });
+    }
+
+    let self_reference = codex_mcp_discovery::SelfReferenceConfig::default();
+    let outcome = codex_mcp_discovery::apply_discovery(codex_mcp_discovery::ApplyDiscoveryInputs {
+        settings: &settings,
+        env: &env,
+        reserved_names: &reserved,
+        self_reference: &self_reference,
+        consent_store: None,
+    });
+
+    for unknown in &outcome.unknown_source_labels {
+        tracing::warn!(
+            source = unknown.as_str(),
+            "external MCP discovery: ignoring unknown source label"
+        );
+    }
+    for shadow in &outcome.shadows {
+        tracing::debug!(
+            name = shadow.name.as_str(),
+            source = shadow.source.label(),
+            "external MCP discovery: shadowed entry ({:?})",
+            shadow.reason,
+        );
+    }
+    for pending in &outcome.pending {
+        tracing::info!(
+            name = pending.server.name.as_str(),
+            source = pending.server.source.label(),
+            origin = %pending.server.origin_path.display(),
+            "external MCP discovery: server pending consent; run `codex mcp consent <name> approve`"
+        );
+    }
+    for (name, server) in outcome.merged_servers {
+        configured_mcp_servers.entry(name).or_insert(server);
+    }
 }
 
 #[cfg(test)]

@@ -56,6 +56,7 @@ members = [
     "lmstudio",
     "login",
     "codex-mcp",
+    "mcp-discovery",
     "mcp-server",
     "memories/mcp",
     "memories/read",
@@ -182,6 +183,7 @@ codex-memories-extension = { path = "ext/memories" }
 codex-memories-read = { path = "memories/read" }
 codex-memories-write = { path = "memories/write" }
 codex-mcp = { path = "codex-mcp" }
+codex-mcp-discovery = { path = "mcp-discovery" }
 codex-mcp-server = { path = "mcp-server" }
 codex-model-provider-info = { path = "model-provider-info" }
 codex-models-manager = { path = "models-manager" }

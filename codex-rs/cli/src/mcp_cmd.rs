@@ -52,6 +52,10 @@ pub enum McpSubcommand {
     Remove(RemoveArgs),
     Login(LoginArgs),
     Logout(LogoutArgs),
+    /// Run the external MCP discovery scan against the current environment.
+    Discover(DiscoverArgs),
+    /// Approve, deny, or auto-approve discovered MCP servers.
+    Consent(ConsentArgs),
 }
 
 #[derive(Debug, clap::Parser)]
@@ -156,6 +160,42 @@ pub struct LogoutArgs {
     pub name: String,
 }
 
+#[derive(Debug, clap::Parser)]
+pub struct DiscoverArgs {
+    /// Emit machine-readable JSON instead of the default table.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct ConsentArgs {
+    #[command(subcommand)]
+    pub subcommand: ConsentSubcommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum ConsentSubcommand {
+    /// Approve a discovered MCP server by name. Codex will connect to it on
+    /// every subsequent start until you `deny` it.
+    Approve(ConsentNameArgs),
+    /// Deny a discovered MCP server. Auto-approve flags will not override it.
+    Deny(ConsentNameArgs),
+    /// Toggle the "auto-approve every discovered server" flag.
+    AutoApprove(AutoApproveArgs),
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct ConsentNameArgs {
+    /// Name of the discovered server as shown by `codex mcp discover`.
+    pub name: String,
+}
+
+#[derive(Debug, clap::Parser)]
+pub struct AutoApproveArgs {
+    /// `true` to enable, `false` to disable.
+    pub enabled: bool,
+}
+
 impl McpCli {
     pub async fn run(self) -> Result<()> {
         let McpCli {
@@ -181,6 +221,12 @@ impl McpCli {
             }
             McpSubcommand::Logout(args) => {
                 run_logout(&config_overrides, args).await?;
+            }
+            McpSubcommand::Discover(args) => {
+                run_discover(&config_overrides, args).await?;
+            }
+            McpSubcommand::Consent(args) => {
+                run_consent(&config_overrides, args).await?;
             }
         }
 
@@ -941,4 +987,168 @@ fn format_mcp_status(config: &McpServerConfig) -> String {
     } else {
         "disabled".to_string()
     }
+}
+
+async fn run_discover(config_overrides: &CliConfigOverrides, args: DiscoverArgs) -> Result<()> {
+    let overrides = config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    let config = Config::load_with_cli_overrides(overrides)
+        .await
+        .context("failed to load configuration")?;
+
+    let settings =
+        codex_mcp_discovery::DiscoverySettings::from_toml(config.external_mcp_discovery.as_ref());
+    let env = codex_mcp_discovery::RealExternalMcpEnv::from_parts(
+        config.cwd.to_path_buf(),
+        dirs::home_dir(),
+        Some(config.codex_home.to_path_buf()),
+    );
+
+    let user_names: Vec<String> = config.mcp_servers.get().keys().cloned().collect();
+    let mut reserved: Vec<codex_mcp_discovery::ReservedName<'_>> = Vec::new();
+    for name in &user_names {
+        reserved.push(codex_mcp_discovery::ReservedName {
+            name: name.as_str(),
+            owner: "config.toml",
+        });
+    }
+    let self_ref = codex_mcp_discovery::SelfReferenceConfig::default();
+    let outcome = codex_mcp_discovery::apply_discovery(codex_mcp_discovery::ApplyDiscoveryInputs {
+        settings: &settings,
+        env: &env,
+        reserved_names: &reserved,
+        self_reference: &self_ref,
+        consent_store: None,
+    });
+
+    if args.json {
+        let merged: Vec<_> = outcome
+            .merged_servers
+            .keys()
+            .map(|name| serde_json::json!({ "name": name, "status": "merged" }))
+            .collect();
+        let pending: Vec<_> = outcome
+            .pending
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "name": p.server.name,
+                    "source": p.server.source.label(),
+                    "origin_path": p.server.origin_path.display().to_string(),
+                    "decision": format!("{:?}", p.decision),
+                })
+            })
+            .collect();
+        let shadows: Vec<_> = outcome
+            .shadows
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "source": s.source.label(),
+                    "origin_path": s.origin_path.display().to_string(),
+                    "reason": format!("{:?}", s.reason),
+                })
+            })
+            .collect();
+        let report = serde_json::json!({
+            "enabled": settings.enabled,
+            "merged": merged,
+            "pending": pending,
+            "shadows": shadows,
+            "unknown_sources": outcome.unknown_source_labels,
+        });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    if !settings.enabled {
+        println!(
+            "External MCP discovery is disabled. Enable it by adding the following to config.toml:"
+        );
+        println!("  [external_mcp_discovery]");
+        println!("  enabled = true");
+        return Ok(());
+    }
+
+    for unknown in &outcome.unknown_source_labels {
+        println!("warning: unknown discovery source label '{unknown}' (ignored)");
+    }
+
+    if outcome.merged_servers.is_empty() && outcome.pending.is_empty() && outcome.shadows.is_empty()
+    {
+        println!("No discovered MCP servers found.");
+        return Ok(());
+    }
+
+    if !outcome.merged_servers.is_empty() {
+        println!("Merged into runtime (already approved):");
+        let mut names: Vec<_> = outcome.merged_servers.keys().collect();
+        names.sort();
+        for name in names {
+            println!("  - {name}");
+        }
+    }
+
+    if !outcome.pending.is_empty() {
+        println!("Pending consent (run `codex mcp consent <name> approve`):");
+        for pending in &outcome.pending {
+            println!(
+                "  - {name}  source={source}  origin={origin}",
+                name = pending.server.name,
+                source = pending.server.source.label(),
+                origin = pending.server.origin_path.display(),
+            );
+        }
+    }
+
+    if !outcome.shadows.is_empty() {
+        println!("Shadowed (suppressed by dedup or higher-priority source):");
+        for shadow in &outcome.shadows {
+            println!(
+                "  - {name}  source={source}  origin={origin}  reason={reason:?}",
+                name = shadow.name,
+                source = shadow.source.label(),
+                origin = shadow.origin_path.display(),
+                reason = shadow.reason,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_consent(config_overrides: &CliConfigOverrides, args: ConsentArgs) -> Result<()> {
+    let overrides = config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    let config = Config::load_with_cli_overrides(overrides)
+        .await
+        .context("failed to load configuration")?;
+    let mut store = codex_mcp_discovery::ConsentStore::load(config.codex_home.as_path());
+    match args.subcommand {
+        ConsentSubcommand::Approve(args) => {
+            store
+                .approve(&args.name)
+                .with_context(|| format!("failed to record consent for '{}'", args.name))?;
+            println!("Approved MCP server '{}'.", args.name);
+        }
+        ConsentSubcommand::Deny(args) => {
+            store
+                .deny(&args.name)
+                .with_context(|| format!("failed to record denial for '{}'", args.name))?;
+            println!("Denied MCP server '{}'.", args.name);
+        }
+        ConsentSubcommand::AutoApprove(args) => {
+            store
+                .set_auto_approve(args.enabled)
+                .context("failed to update auto-approve flag")?;
+            println!(
+                "Auto-approve for newly discovered MCP servers: {}",
+                if args.enabled { "ON" } else { "OFF" }
+            );
+        }
+    }
+    Ok(())
 }

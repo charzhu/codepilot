@@ -45,6 +45,7 @@ codex-install-context = { workspace = true }
 codex-login = { workspace = true }
 codex-memories-write = { workspace = true }
 codex-mcp = { workspace = true }
+codex-mcp-discovery = { workspace = true }
 codex-mcp-server = { workspace = true }
 codex-model-provider = { workspace = true }
 codex-models-manager = { workspace = true }
@@ -61,6 +62,7 @@ codex-tui = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
 codex-utils-path = { workspace = true }
 crossterm = { workspace = true }
+dirs = { workspace = true }
 http = { workspace = true }
 libc = { workspace = true }
 owo-colors = { workspace = true }

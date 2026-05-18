@@ -192,6 +192,36 @@ pub struct AnalyticsConfigToml {
     pub enabled: Option<bool>,
 }
 
+// ===== External MCP discovery configuration =====
+
+/// How to treat newly discovered external MCP servers when no consent
+/// decision has been recorded yet.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalMcpAutoApprove {
+    /// Only auto-approve sources that are inherently trusted (currently `Own`).
+    #[default]
+    Trusted,
+    /// Auto-approve every discovered server without prompting.
+    All,
+    /// Never auto-approve. Even `Own` discoveries require explicit approve.
+    None,
+}
+
+/// Configuration for the external MCP discovery scan that runs at agent startup.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ExternalMcpDiscoveryToml {
+    /// Master switch. When `false` Codex skips the entire scan.
+    pub enabled: Option<bool>,
+    /// Which sources to consult. `None` means all known sources are scanned.
+    pub sources: Option<Vec<String>>,
+    /// Collapse two discovered entries that resolve to the same command/url.
+    pub dedupe_by_content: Option<bool>,
+    /// Auto-approval policy for newly discovered servers.
+    pub auto_approve: Option<ExternalMcpAutoApprove>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct FeedbackConfigToml {

@@ -11,6 +11,7 @@ use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
 use crate::types::AppsConfigToml;
 use crate::types::AuthCredentialsStoreMode;
+use crate::types::ExternalMcpDiscoveryToml;
 use crate::types::FeedbackConfigToml;
 use crate::types::History;
 use crate::types::MarketplaceConfig;
@@ -267,6 +268,12 @@ pub struct ConfigToml {
     /// of the local listener address. The local callback listener still binds
     /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
     pub mcp_oauth_callback_url: Option<String>,
+
+    /// External MCP discovery scan settings. When omitted, discovery stays
+    /// disabled and Codex only loads servers from `[mcp_servers]` and plugin
+    /// definitions.
+    #[serde(default)]
+    pub external_mcp_discovery: Option<ExternalMcpDiscoveryToml>,
 
     /// User-defined provider entries that extend the built-in list. Built-in
     /// IDs cannot be overridden.
