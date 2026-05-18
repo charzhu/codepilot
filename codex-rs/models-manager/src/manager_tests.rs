@@ -521,6 +521,78 @@ async fn refresh_available_models_keeps_merging_for_api_auth() {
 }
 
 #[tokio::test]
+async fn authoritative_remote_manager_replaces_bundled_catalog() {
+    let remote_models = vec![remote_model(
+        "github-copilot-only-model",
+        "GitHub Copilot Only",
+        /*priority*/ 0,
+    )];
+    let codex_home = tempdir().expect("temp dir");
+    let endpoint = TestModelsEndpoint::without_refresh(vec![remote_models.clone()]);
+    let manager = OpenAiModelsManager::new_authoritative(
+        codex_home.path().to_path_buf(),
+        "github-copilot",
+        endpoint.clone(),
+        /*auth_manager*/ None,
+    );
+
+    manager
+        .refresh_available_models(RefreshStrategy::OnlineIfUncached)
+        .await
+        .expect("refresh succeeds");
+
+    assert_eq!(manager.get_remote_models().await, remote_models);
+    assert_eq!(
+        endpoint.fetch_count(),
+        1,
+        "authoritative managers should fetch even without Codex backend auth"
+    );
+}
+
+#[tokio::test]
+async fn authoritative_remote_manager_uses_provider_scoped_cache_file() {
+    let openai_remote = vec![remote_model("openai-cache-model", "OpenAI Cached", 0)];
+    let copilot_remote = vec![remote_model(
+        "github-copilot-cache-model",
+        "GitHub Copilot Cached",
+        0,
+    )];
+    let codex_home = tempdir().expect("temp dir");
+    let openai_endpoint = TestModelsEndpoint::new(vec![openai_remote]);
+    let openai_manager = openai_manager_for_tests(codex_home.path().to_path_buf(), openai_endpoint);
+    openai_manager
+        .refresh_available_models(RefreshStrategy::OnlineIfUncached)
+        .await
+        .expect("OpenAI refresh succeeds");
+
+    let copilot_endpoint = TestModelsEndpoint::without_refresh(vec![copilot_remote.clone()]);
+    let copilot_manager = OpenAiModelsManager::new_authoritative(
+        codex_home.path().to_path_buf(),
+        "github-copilot",
+        copilot_endpoint.clone(),
+        /*auth_manager*/ None,
+    );
+    copilot_manager
+        .refresh_available_models(RefreshStrategy::OnlineIfUncached)
+        .await
+        .expect("Copilot refresh succeeds");
+
+    assert_eq!(copilot_manager.get_remote_models().await, copilot_remote);
+    assert_eq!(
+        copilot_endpoint.fetch_count(),
+        1,
+        "provider-scoped cache should not reuse the default OpenAI cache"
+    );
+    assert!(codex_home.path().join("models_cache.json").exists());
+    assert!(
+        codex_home
+            .path()
+            .join(provider_model_cache_file("github-copilot"))
+            .exists()
+    );
+}
+
+#[tokio::test]
 async fn refresh_available_models_uses_cache_when_fresh() {
     let remote_models = vec![remote_model("cached", "Cached", /*priority*/ 5)];
     let codex_home = tempdir().expect("temp dir");

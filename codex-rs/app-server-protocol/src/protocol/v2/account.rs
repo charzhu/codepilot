@@ -28,6 +28,10 @@ pub enum Account {
     #[serde(rename = "amazonBedrock", rename_all = "camelCase")]
     #[ts(rename = "amazonBedrock", rename_all = "camelCase")]
     AmazonBedrock {},
+
+    #[serde(rename = "githubCopilot", rename_all = "camelCase")]
+    #[ts(rename = "githubCopilot", rename_all = "camelCase")]
+    GitHubCopilot {},
 }
 
 impl From<ProviderAccount> for Account {
@@ -36,6 +40,7 @@ impl From<ProviderAccount> for Account {
             ProviderAccount::ApiKey => Self::ApiKey {},
             ProviderAccount::Chatgpt { email, plan_type } => Self::Chatgpt { email, plan_type },
             ProviderAccount::AmazonBedrock => Self::AmazonBedrock {},
+            ProviderAccount::GitHubCopilot => Self::GitHubCopilot {},
         }
     }
 }
@@ -61,6 +66,9 @@ pub enum LoginAccountParams {
     #[serde(rename = "chatgptDeviceCode")]
     #[ts(rename = "chatgptDeviceCode")]
     ChatgptDeviceCode,
+    #[serde(rename = "githubCopilotDeviceCode")]
+    #[ts(rename = "githubCopilotDeviceCode")]
+    GitHubCopilotDeviceCode,
     /// [UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE.
     /// The access token must contain the same scopes that Codex-managed ChatGPT auth tokens have.
     #[experimental("account/login/start.chatgptAuthTokens")]
@@ -101,6 +109,17 @@ pub enum LoginAccountResponse {
     #[serde(rename = "chatgptDeviceCode", rename_all = "camelCase")]
     #[ts(rename = "chatgptDeviceCode", rename_all = "camelCase")]
     ChatgptDeviceCode {
+        // Use plain String for identifiers to avoid TS/JSON Schema quirks around uuid-specific types.
+        // Convert to/from UUIDs at the application layer as needed.
+        login_id: String,
+        /// URL the client should open in a browser to complete device code authorization.
+        verification_url: String,
+        /// One-time code the user must enter after signing in.
+        user_code: String,
+    },
+    #[serde(rename = "githubCopilotDeviceCode", rename_all = "camelCase")]
+    #[ts(rename = "githubCopilotDeviceCode", rename_all = "camelCase")]
+    GitHubCopilotDeviceCode {
         // Use plain String for identifiers to avoid TS/JSON Schema quirks around uuid-specific types.
         // Convert to/from UUIDs at the application layer as needed.
         login_id: String,

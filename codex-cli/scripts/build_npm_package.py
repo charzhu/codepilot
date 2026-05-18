@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage and optionally package the @openai/codex npm module."""
+"""Stage and optionally package the @charzhu/codepilot npm module."""
 
 import argparse
 import json
@@ -14,74 +14,37 @@ CODEX_CLI_ROOT = SCRIPT_DIR.parent
 REPO_ROOT = CODEX_CLI_ROOT.parent
 RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / "npm"
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
-CODEX_NPM_NAME = "@openai/codex"
+CODEPILOT_NPM_NAME = "@charzhu/codepilot"
 
-# `npm_name` is the local optional-dependency alias consumed by `bin/codex.js`.
-# The underlying package published to npm is always `@openai/codex`.
-CODEX_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
-    "codex-linux-x64": {
-        "npm_name": "@openai/codex-linux-x64",
-        "npm_tag": "linux-x64",
-        "target_triple": "x86_64-unknown-linux-musl",
-        "os": "linux",
-        "cpu": "x64",
-    },
-    "codex-linux-arm64": {
-        "npm_name": "@openai/codex-linux-arm64",
-        "npm_tag": "linux-arm64",
-        "target_triple": "aarch64-unknown-linux-musl",
-        "os": "linux",
-        "cpu": "arm64",
-    },
-    "codex-darwin-x64": {
-        "npm_name": "@openai/codex-darwin-x64",
-        "npm_tag": "darwin-x64",
-        "target_triple": "x86_64-apple-darwin",
-        "os": "darwin",
-        "cpu": "x64",
-    },
-    "codex-darwin-arm64": {
-        "npm_name": "@openai/codex-darwin-arm64",
-        "npm_tag": "darwin-arm64",
-        "target_triple": "aarch64-apple-darwin",
-        "os": "darwin",
-        "cpu": "arm64",
-    },
-    "codex-win32-x64": {
-        "npm_name": "@openai/codex-win32-x64",
+CODEPILOT_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
+    "codepilot-win32-x64": {
+        "npm_name": "@charzhu/codepilot-win32-x64",
         "npm_tag": "win32-x64",
         "target_triple": "x86_64-pc-windows-msvc",
         "os": "win32",
         "cpu": "x64",
     },
-    "codex-win32-arm64": {
-        "npm_name": "@openai/codex-win32-arm64",
-        "npm_tag": "win32-arm64",
-        "target_triple": "aarch64-pc-windows-msvc",
-        "os": "win32",
-        "cpu": "arm64",
-    },
 }
 
 PACKAGE_EXPANSIONS: dict[str, list[str]] = {
-    "codex": ["codex", *CODEX_PLATFORM_PACKAGES],
+    "codepilot": ["codepilot", *CODEPILOT_PLATFORM_PACKAGES],
 }
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
-    "codex": [],
-    "codex-linux-x64": ["bwrap", "codex", "rg"],
-    "codex-linux-arm64": ["bwrap", "codex", "rg"],
-    "codex-darwin-x64": ["codex", "rg"],
-    "codex-darwin-arm64": ["codex", "rg"],
-    "codex-win32-x64": ["codex", "rg", "codex-windows-sandbox-setup", "codex-command-runner"],
-    "codex-win32-arm64": ["codex", "rg", "codex-windows-sandbox-setup", "codex-command-runner"],
+    "codepilot": [],
+    "codepilot-win32-x64": [
+        "codepilot",
+        "rg",
+        "codex-windows-sandbox-setup",
+        "codex-command-runner",
+    ],
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
     "codex-sdk": [],
 }
 
 PACKAGE_TARGET_FILTERS: dict[str, str] = {
     package_name: package_config["target_triple"]
-    for package_name, package_config in CODEX_PLATFORM_PACKAGES.items()
+    for package_name, package_config in CODEPILOT_PLATFORM_PACKAGES.items()
 }
 
 PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
@@ -89,6 +52,7 @@ PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
 COMPONENT_DEST_DIR: dict[str, str] = {
     "bwrap": "codex-resources",
     "codex": "codex",
+    "codepilot": "codex",
     "codex-responses-api-proxy": "codex-responses-api-proxy",
     "codex-windows-sandbox-setup": "codex",
     "codex-command-runner": "codex",
@@ -97,12 +61,12 @@ COMPONENT_DEST_DIR: dict[str, str] = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build or stage the Codex CLI npm package.")
+    parser = argparse.ArgumentParser(description="Build or stage the Codepilot CLI npm package.")
     parser.add_argument(
         "--package",
         choices=PACKAGE_CHOICES,
-        default="codex",
-        help="Which npm package to stage (default: codex).",
+        default="codepilot",
+        help="Which npm package to stage (default: codepilot).",
     )
     parser.add_argument(
         "--version",
@@ -193,12 +157,12 @@ def main() -> int:
 
         if release_version:
             staging_dir_str = str(staging_dir)
-            if package == "codex":
+            if package == "codepilot":
                 print(
                     f"Staged version {version} for release in {staging_dir_str}\n\n"
                     "Verify the CLI:\n"
-                    f"    node {staging_dir_str}/bin/codex.js --version\n"
-                    f"    node {staging_dir_str}/bin/codex.js --help\n\n"
+                    f"    node {staging_dir_str}/bin/codepilot.js --version\n"
+                    f"    node {staging_dir_str}/bin/codepilot.js --help\n\n"
                 )
             elif package == "codex-responses-api-proxy":
                 print(
@@ -206,7 +170,7 @@ def main() -> int:
                     "Verify the responses API proxy:\n"
                     f"    node {staging_dir_str}/bin/codex-responses-api-proxy.js --help\n\n"
                 )
-            elif package in CODEX_PLATFORM_PACKAGES:
+            elif package in CODEPILOT_PLATFORM_PACKAGES:
                 print(
                     f"Staged version {version} for release in {staging_dir_str}\n\n"
                     "Verify native payload contents:\n"
@@ -241,7 +205,7 @@ def prepare_staging_dir(staging_dir: Path | None) -> tuple[Path, bool]:
             raise RuntimeError(f"Staging directory {staging_dir} is not empty.")
         return staging_dir, False
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="codex-npm-stage-"))
+    temp_dir = Path(tempfile.mkdtemp(prefix="codepilot-npm-stage-"))
     return temp_dir, True
 
 
@@ -249,33 +213,28 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
     package_json: dict
     package_json_path: Path | None = None
 
-    if package == "codex":
+    if package == "codepilot":
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CODEX_CLI_ROOT / "bin" / "codex.js", bin_dir / "codex.js")
+        shutil.copy2(CODEX_CLI_ROOT / "bin" / "codepilot.js", bin_dir / "codepilot.js")
         rg_manifest = CODEX_CLI_ROOT / "bin" / "rg"
         if rg_manifest.exists():
             shutil.copy2(rg_manifest, bin_dir / "rg")
 
-        readme_src = REPO_ROOT / "README.md"
-        if readme_src.exists():
-            shutil.copy2(readme_src, staging_dir / "README.md")
+        write_codepilot_readme(staging_dir)
 
         package_json_path = CODEX_CLI_ROOT / "package.json"
-    elif package in CODEX_PLATFORM_PACKAGES:
-        platform_package = CODEX_PLATFORM_PACKAGES[package]
-        platform_npm_tag = platform_package["npm_tag"]
-        platform_version = compute_platform_package_version(version, platform_npm_tag)
+    elif package in CODEPILOT_PLATFORM_PACKAGES:
+        platform_package = CODEPILOT_PLATFORM_PACKAGES[package]
+        platform_version = version
 
-        readme_src = REPO_ROOT / "README.md"
-        if readme_src.exists():
-            shutil.copy2(readme_src, staging_dir / "README.md")
+        write_codepilot_readme(staging_dir)
 
         with open(CODEX_CLI_ROOT / "package.json", "r", encoding="utf-8") as fh:
             codex_package_json = json.load(fh)
 
         package_json = {
-            "name": CODEX_NPM_NAME,
+            "name": platform_package["npm_name"],
             "version": platform_version,
             "license": codex_package_json.get("license", "Apache-2.0"),
             "os": [platform_package["os"]],
@@ -313,15 +272,12 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             package_json = json.load(fh)
         package_json["version"] = version
 
-    if package == "codex":
-        package_json["files"] = ["bin"]
+    if package == "codepilot":
+        package_json["files"] = ["bin/codepilot.js", "bin/rg"]
         package_json["optionalDependencies"] = {
-            CODEX_PLATFORM_PACKAGES[platform_package]["npm_name"]: (
-                f"npm:{CODEX_NPM_NAME}@"
-                f"{compute_platform_package_version(version, CODEX_PLATFORM_PACKAGES[platform_package]['npm_tag'])}"
-            )
-            for platform_package in PACKAGE_EXPANSIONS["codex"]
-            if platform_package != "codex"
+            CODEPILOT_PLATFORM_PACKAGES[platform_package]["npm_name"]: version
+            for platform_package in PACKAGE_EXPANSIONS["codepilot"]
+            if platform_package != "codepilot"
         }
 
     elif package == "codex-sdk":
@@ -332,7 +288,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         dependencies = package_json.get("dependencies")
         if not isinstance(dependencies, dict):
             dependencies = {}
-        dependencies[CODEX_NPM_NAME] = version
+        dependencies[CODEPILOT_NPM_NAME] = version
         package_json["dependencies"] = dependencies
 
     with open(staging_dir / "package.json", "w", encoding="utf-8") as out:
@@ -340,10 +296,19 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         out.write("\n")
 
 
-def compute_platform_package_version(version: str, platform_tag: str) -> str:
-    # npm forbids republishing the same package name/version, so each
-    # platform-specific tarball needs a unique version string.
-    return f"{version}-{platform_tag}"
+def write_codepilot_readme(staging_dir: Path) -> None:
+    (staging_dir / "README.md").write_text(
+        "# Codepilot\n\n"
+        "Install with:\n\n"
+        "```sh\n"
+        "npm install -g @charzhu/codepilot\n"
+        "```\n\n"
+        "Then run:\n\n"
+        "```sh\n"
+        "codepilot --version\n"
+        "```\n",
+        encoding="utf-8",
+    )
 
 
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
@@ -435,10 +400,10 @@ def run_npm_pack(staging_dir: Path, output_path: Path) -> Path:
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="codex-npm-pack-") as pack_dir_str:
+    with tempfile.TemporaryDirectory(prefix="codepilot-npm-pack-") as pack_dir_str:
         pack_dir = Path(pack_dir_str)
         stdout = subprocess.check_output(
-            ["npm", "pack", "--json", "--pack-destination", str(pack_dir)],
+            [npm_executable(), "pack", "--json", "--pack-destination", str(pack_dir)],
             cwd=staging_dir,
             text=True,
         )
@@ -461,6 +426,14 @@ def run_npm_pack(staging_dir: Path, output_path: Path) -> Path:
         shutil.move(str(tarball_path), output_path)
 
     return output_path
+
+
+def npm_executable() -> str:
+    for candidate in ["npm", "npm.cmd"]:
+        path = shutil.which(candidate)
+        if path:
+            return path
+    raise RuntimeError("Unable to find npm on PATH.")
 
 
 if __name__ == "__main__":

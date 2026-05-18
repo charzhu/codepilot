@@ -58,6 +58,22 @@
           ],
           "title": "AmazonBedrockAccount",
           "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "githubCopilot"
+              ],
+              "title": "GithubCopilotAccountType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "GithubCopilotAccount",
+          "type": "object"
         }
       ]
     },

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage one or more Codex npm packages for release."""
+"""Stage one or more Codepilot npm packages for release."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_SCRIPT = REPO_ROOT / "codex-cli" / "scripts" / "build_npm_package.py"
 INSTALL_NATIVE_DEPS = REPO_ROOT / "codex-cli" / "scripts" / "install_native_deps.py"
-WORKFLOW_NAME = ".github/workflows/rust-release.yml"
-GITHUB_REPO = "openai/codex"
+WORKFLOW_NAME = ".github/workflows/release-npm.yml"
+GITHUB_REPO = "charzhu/codepilot"
 
 _SPEC = importlib.util.spec_from_file_location("codex_build_npm_package", BUILD_SCRIPT)
 if _SPEC is None or _SPEC.loader is None:
@@ -26,7 +26,7 @@ _BUILD_MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_BUILD_MODULE)
 PACKAGE_NATIVE_COMPONENTS = getattr(_BUILD_MODULE, "PACKAGE_NATIVE_COMPONENTS", {})
 PACKAGE_EXPANSIONS = getattr(_BUILD_MODULE, "PACKAGE_EXPANSIONS", {})
-CODEX_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEX_PLATFORM_PACKAGES", {})
+CODEPILOT_PLATFORM_PACKAGES = getattr(_BUILD_MODULE, "CODEPILOT_PLATFORM_PACKAGES", {})
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,7 +95,7 @@ def resolve_release_workflow(version: str) -> dict:
             "run",
             "list",
             "--branch",
-            f"rust-v{version}",
+            f"codepilot-v{version}",
             "--json",
             "workflowName,url,headSha",
             "--workflow",
@@ -108,7 +108,7 @@ def resolve_release_workflow(version: str) -> dict:
     )
     workflow = json.loads(stdout or "null")
     if not workflow:
-        raise RuntimeError(f"Unable to find rust-release workflow for version {version}.")
+        raise RuntimeError(f"Unable to find npm release workflow for version {version}.")
     return workflow
 
 
@@ -141,9 +141,9 @@ def run_command(cmd: list[str]) -> None:
 
 
 def tarball_name_for_package(package: str, version: str) -> str:
-    if package in CODEX_PLATFORM_PACKAGES:
-        platform = package.removeprefix("codex-")
-        return f"codex-npm-{platform}-{version}.tgz"
+    if package in CODEPILOT_PLATFORM_PACKAGES:
+        platform = package.removeprefix("codepilot-")
+        return f"codepilot-npm-{platform}-{version}.tgz"
     return f"{package}-npm-{version}.tgz"
 
 

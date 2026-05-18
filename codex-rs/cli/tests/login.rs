@@ -12,6 +12,12 @@ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     Ok(cmd)
 }
 
+fn codepilot_command(codex_home: &Path) -> Result<assert_cmd::Command> {
+    let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codepilot")?);
+    cmd.env("CODEX_HOME", codex_home);
+    Ok(cmd)
+}
+
 fn write_file_auth_config(codex_home: &Path) -> Result<()> {
     std::fs::write(
         codex_home.join("config.toml"),
@@ -46,6 +52,19 @@ fn login_with_api_key_reads_stdin_and_writes_auth_json() -> Result<()> {
     assert_eq!(auth["OPENAI_API_KEY"], "sk-test");
     assert!(auth.get("tokens").is_none());
     assert!(auth.get("agent_identity").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn codepilot_alias_accepts_login_subcommand() -> Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let mut cmd = codepilot_command(codex_home.path())?;
+    cmd.args(["login", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("github-copilot"));
 
     Ok(())
 }

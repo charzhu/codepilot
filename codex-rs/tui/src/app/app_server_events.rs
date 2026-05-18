@@ -93,6 +93,20 @@ impl App {
                 );
                 return;
             }
+            ServerNotification::AccountLoginCompleted(notification) => {
+                if notification.success {
+                    self.chat_widget
+                        .add_info_message("Login completed.".to_string(), /*hint*/ None);
+                } else {
+                    let error = notification
+                        .error
+                        .as_deref()
+                        .unwrap_or("Login was not completed.");
+                    self.chat_widget
+                        .add_error_message(format!("Login failed: {error}"));
+                }
+                return;
+            }
             ServerNotification::ExternalAgentConfigImportCompleted(_) => {
                 let cwd = self.chat_widget.config_ref().cwd.to_path_buf();
                 if let Err(err) = self.refresh_in_memory_config_from_disk().await {

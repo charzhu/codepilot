@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Codex native binaries (Rust CLI, bwrap, and ripgrep helpers)."""
+"""Install Codepilot native binaries and ripgrep helpers."""
 
 import argparse
 from contextlib import contextmanager
@@ -20,16 +20,11 @@ from urllib.request import urlopen
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 CODEX_CLI_ROOT = SCRIPT_DIR.parent
-DEFAULT_WORKFLOW_URL = "https://github.com/openai/codex/actions/runs/17952349351"  # rust-v0.40.0
+DEFAULT_WORKFLOW_URL = ""
 VENDOR_DIR_NAME = "vendor"
 RG_MANIFEST = CODEX_CLI_ROOT / "bin" / "rg"
 BINARY_TARGETS = (
-    "x86_64-unknown-linux-musl",
-    "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
-    "aarch64-pc-windows-msvc",
 )
 
 
@@ -42,19 +37,12 @@ class BinaryComponent:
 
 
 WINDOWS_TARGETS = tuple(target for target in BINARY_TARGETS if "windows" in target)
-LINUX_TARGETS = tuple(target for target in BINARY_TARGETS if "linux" in target)
 
 BINARY_COMPONENTS = {
-    "bwrap": BinaryComponent(
-        artifact_prefix="bwrap",
-        dest_dir="codex-resources",
-        binary_basename="bwrap",
-        targets=LINUX_TARGETS,
-    ),
-    "codex": BinaryComponent(
-        artifact_prefix="codex",
+    "codepilot": BinaryComponent(
+        artifact_prefix="codepilot",
         dest_dir="codex",
-        binary_basename="codex",
+        binary_basename="codepilot",
     ),
     "codex-responses-api-proxy": BinaryComponent(
         artifact_prefix="codex-responses-api-proxy",
@@ -84,7 +72,7 @@ RG_TARGET_PLATFORM_PAIRS: list[tuple[str, str]] = [
     ("aarch64-pc-windows-msvc", "windows-aarch64"),
 ]
 RG_TARGET_TO_PLATFORM = {target: platform for target, platform in RG_TARGET_PLATFORM_PAIRS}
-DEFAULT_RG_TARGETS = [target for target, _ in RG_TARGET_PLATFORM_PAIRS]
+DEFAULT_RG_TARGETS = ["x86_64-pc-windows-msvc"]
 
 # urllib.request.urlopen() defaults to no timeout (can hang indefinitely), which is painful in CI.
 DOWNLOAD_TIMEOUT_SECS = 60
@@ -127,7 +115,7 @@ def _gha_group(title: str):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Install native Codex binaries.")
+    parser = argparse.ArgumentParser(description="Install native Codepilot binaries.")
     parser.add_argument(
         "--workflow-url",
         help=(
@@ -142,7 +130,7 @@ def parse_args() -> argparse.Namespace:
         choices=tuple(list(BINARY_COMPONENTS) + ["rg"]),
         help=(
             "Limit installation to the specified components."
-            " May be repeated. Defaults to bwrap, codex, codex-windows-sandbox-setup,"
+            " May be repeated. Defaults to codepilot, codex-windows-sandbox-setup,"
             " codex-command-runner, and rg."
         ),
     )
@@ -166,29 +154,34 @@ def main() -> int:
     vendor_dir.mkdir(parents=True, exist_ok=True)
 
     components = args.components or [
-        "bwrap",
-        "codex",
+        "codepilot",
         "codex-windows-sandbox-setup",
         "codex-command-runner",
         "rg",
     ]
 
     workflow_url = (args.workflow_url or DEFAULT_WORKFLOW_URL).strip()
-    if not workflow_url:
-        workflow_url = DEFAULT_WORKFLOW_URL
+    selected_binary_components = [
+        BINARY_COMPONENTS[name] for name in components if name in BINARY_COMPONENTS
+    ]
+    if selected_binary_components and not workflow_url:
+        raise RuntimeError("--workflow-url is required when installing native workflow artifacts.")
 
-    workflow_id = workflow_url.rstrip("/").split("/")[-1]
-    print(f"Downloading native artifacts from workflow {workflow_id}...")
+    if selected_binary_components:
+        workflow_id = workflow_url.rstrip("/").split("/")[-1]
+        print(f"Downloading native artifacts from workflow {workflow_id}...")
 
-    with _gha_group(f"Download native artifacts from workflow {workflow_id}"):
-        with tempfile.TemporaryDirectory(prefix="codex-native-artifacts-") as artifacts_dir_str:
-            artifacts_dir = Path(artifacts_dir_str)
-            _download_artifacts(workflow_id, artifacts_dir)
-            install_binary_components(
-                artifacts_dir,
-                vendor_dir,
-                [BINARY_COMPONENTS[name] for name in components if name in BINARY_COMPONENTS],
-            )
+        with _gha_group(f"Download native artifacts from workflow {workflow_id}"):
+            with tempfile.TemporaryDirectory(
+                prefix="codepilot-native-artifacts-"
+            ) as artifacts_dir_str:
+                artifacts_dir = Path(artifacts_dir_str)
+                _download_artifacts(workflow_id, artifacts_dir)
+                install_binary_components(
+                    artifacts_dir,
+                    vendor_dir,
+                    selected_binary_components,
+                )
 
     if "rg" in components:
         with _gha_group("Fetch ripgrep binaries"):
@@ -275,7 +268,7 @@ def _download_artifacts(workflow_id: str, dest_dir: Path) -> None:
         "--dir",
         str(dest_dir),
         "--repo",
-        "openai/codex",
+        "charzhu/codepilot",
         workflow_id,
     ]
     subprocess.check_call(cmd)
@@ -463,7 +456,11 @@ def extract_archive(
 
 def _load_manifest(manifest_path: Path) -> dict:
     cmd = ["dotslash", "--", "parse", str(manifest_path)]
-    stdout = subprocess.check_output(cmd, text=True)
+    try:
+        stdout = subprocess.check_output(cmd, text=True)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        lines = manifest_path.read_text(encoding="utf-8").splitlines()
+        stdout = "\n".join(line for line in lines if not line.startswith("#!"))
     try:
         manifest = json.loads(stdout)
     except json.JSONDecodeError as exc:

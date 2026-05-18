@@ -73,6 +73,12 @@ impl fmt::Display for RefreshStrategy {
 
 type SharedModelsEndpointClient = Arc<dyn ModelsEndpointClient>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteCatalogPolicy {
+    MergeBundled,
+    Authoritative,
+}
+
 /// Coordinates model discovery plus cached metadata on disk.
 #[async_trait]
 pub trait ModelsManager: fmt::Debug + Send + Sync {
@@ -185,6 +191,7 @@ pub struct OpenAiModelsManager {
     cache_manager: ModelsCacheManager,
     endpoint_client: SharedModelsEndpointClient,
     auth_manager: Option<Arc<AuthManager>>,
+    catalog_policy: RemoteCatalogPolicy,
 }
 
 /// Static model manager backed by an authoritative in-process catalog.
@@ -210,6 +217,29 @@ impl OpenAiModelsManager {
             cache_manager,
             endpoint_client,
             auth_manager,
+            catalog_policy: RemoteCatalogPolicy::MergeBundled,
+        }
+    }
+
+    /// Construct a remote model manager whose fetched catalog is authoritative.
+    ///
+    /// This is intended for providers whose `/models` endpoint already returns the complete
+    /// account-scoped picker catalog, so bundled OpenAI models must not be merged into it.
+    pub fn new_authoritative(
+        codex_home: PathBuf,
+        provider_cache_key: &str,
+        endpoint_client: Arc<dyn ModelsEndpointClient>,
+        auth_manager: Option<Arc<AuthManager>>,
+    ) -> Self {
+        let cache_path = codex_home.join(provider_model_cache_file(provider_cache_key));
+        let cache_manager = ModelsCacheManager::new(cache_path, DEFAULT_MODEL_CACHE_TTL);
+        Self {
+            remote_models: RwLock::new(Vec::new()),
+            etag: RwLock::new(None),
+            cache_manager,
+            endpoint_client,
+            auth_manager,
+            catalog_policy: RemoteCatalogPolicy::Authoritative,
         }
     }
 }
@@ -312,7 +342,9 @@ impl OpenAiModelsManager {
     }
 
     async fn should_refresh_models(&self) -> bool {
-        self.endpoint_client.uses_codex_backend().await || self.endpoint_client.has_command_auth()
+        self.catalog_policy == RemoteCatalogPolicy::Authoritative
+            || self.endpoint_client.uses_codex_backend().await
+            || self.endpoint_client.has_command_auth()
     }
 
     async fn get_etag(&self) -> Option<String> {
@@ -321,6 +353,11 @@ impl OpenAiModelsManager {
 
     /// Replace the cached remote models and rebuild the derived presets list.
     async fn apply_remote_models(&self, models: Vec<ModelInfo>) {
+        if self.catalog_policy == RemoteCatalogPolicy::Authoritative {
+            *self.remote_models.write().await = models;
+            return;
+        }
+
         // Use the remote models list as the source of truth if it contains at least one
         // non-hidden model and the user is using ChatGPT auth.
         let should_use_remote_models_only = !models.is_empty()
@@ -358,8 +395,6 @@ impl OpenAiModelsManager {
             codex_otel::start_global_timer("codex.remote_models.load_cache.duration_ms", &[]);
         let client_version = crate::client_version_to_whole();
         info!(client_version, "models cache: evaluating cache eligibility");
-        // TODO(celia-oai): Include provider identity in cache eligibility so switching
-        // providers does not reuse a fresh models_cache.json entry from another provider.
         let cache = match self.cache_manager.load_fresh(&client_version).await {
             Some(cache) => cache,
             None => {
@@ -408,6 +443,24 @@ impl ModelsManager for StaticModelsManager {
 
 fn load_remote_models_from_file() -> Result<Vec<ModelInfo>, std::io::Error> {
     Ok(crate::bundled_models_response()?.models)
+}
+
+fn provider_model_cache_file(provider_cache_key: &str) -> String {
+    let sanitized: String = provider_cache_key
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let sanitized = sanitized.trim_matches('_');
+    if sanitized.is_empty() {
+        return MODEL_CACHE_FILE.to_string();
+    }
+    format!("models_cache.{sanitized}.json")
 }
 
 fn default_model_from_available(available: Vec<ModelPreset>) -> String {

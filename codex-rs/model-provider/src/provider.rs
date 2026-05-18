@@ -16,6 +16,7 @@ use codex_protocol::openai_models::ModelsResponse;
 use crate::amazon_bedrock::AmazonBedrockModelProvider;
 use crate::auth::auth_manager_for_provider;
 use crate::auth::resolve_provider_auth;
+use crate::github_copilot::GitHubCopilotModelProvider;
 use crate::models_endpoint::OpenAiModelsEndpoint;
 
 /// Optional provider-backed features that Codex may expose at runtime.
@@ -151,6 +152,8 @@ pub fn create_model_provider(
 ) -> SharedModelProvider {
     if provider_info.is_amazon_bedrock() {
         Arc::new(AmazonBedrockModelProvider::new(provider_info))
+    } else if provider_info.is_github_copilot() {
+        Arc::new(GitHubCopilotModelProvider::new(provider_info, auth_manager))
     } else {
         Arc::new(ConfiguredModelProvider::new(provider_info, auth_manager))
     }
@@ -488,6 +491,29 @@ mod tests {
                 account: Some(ProviderAccount::AmazonBedrock),
                 requires_openai_auth: false,
             })
+        );
+    }
+
+    #[test]
+    fn github_copilot_provider_uses_provider_scoped_auth_manager() {
+        let codex_home = test_codex_home().join("github-copilot-provider-scoped-auth");
+        let _ = std::fs::remove_dir_all(&codex_home);
+        let provider = create_model_provider(
+            ModelProviderInfo::create_github_copilot_provider(),
+            Some(AuthManager::from_auth_for_testing_with_home(
+                CodexAuth::from_api_key("openai-api-key"),
+                codex_home,
+            )),
+        );
+
+        assert!(provider.auth_manager().is_some());
+        assert_eq!(
+            provider.capabilities(),
+            ProviderCapabilities {
+                namespace_tools: true,
+                image_generation: false,
+                web_search: true,
+            }
         );
     }
 

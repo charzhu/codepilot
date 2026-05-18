@@ -36,6 +36,7 @@ const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str = "Press Esc to return to the ma
 const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
+const LOGIN_USAGE: &str = "Usage: /login github-copilot";
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -125,6 +126,24 @@ impl ChatWidget {
     fn emit_raw_output_mode_changed(&self, enabled: bool) {
         self.app_event_tx
             .send(AppEvent::RawOutputModeChanged { enabled });
+    }
+
+    fn open_login_provider_picker(&mut self) {
+        let items = vec![SelectionItem {
+            name: "GitHub Copilot".to_string(),
+            description: Some("Start device-code sign-in for GitHub Copilot models.".to_string()),
+            actions: vec![Box::new(|tx| tx.send(AppEvent::LoginGitHubCopilot))],
+            dismiss_on_select: true,
+            ..Default::default()
+        }];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Sign in".to_string()),
+            subtitle: Some("Choose a provider to sign in to.".to_string()),
+            items,
+            ..Default::default()
+        });
+        self.request_redraw();
     }
 
     pub(super) fn dispatch_command(&mut self, cmd: SlashCommand) {
@@ -419,6 +438,9 @@ impl ChatWidget {
             SlashCommand::Plugins => {
                 self.add_plugins_output();
             }
+            SlashCommand::Login => {
+                self.open_login_provider_picker();
+            }
             SlashCommand::Rollout => {
                 if let Some(path) = self.rollout_path() {
                     self.add_info_message(
@@ -611,6 +633,12 @@ impl ChatWidget {
                     self.emit_raw_output_mode_changed(/*enabled*/ false);
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
+            },
+            SlashCommand::Login => match trimmed.to_ascii_lowercase().as_str() {
+                "github-copilot" | "github" | "copilot" => {
+                    self.app_event_tx.send(AppEvent::LoginGitHubCopilot);
+                }
+                _ => self.add_error_message(LOGIN_USAGE.to_string()),
             },
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
@@ -967,6 +995,7 @@ impl ChatWidget {
             | SlashCommand::Memories
             | SlashCommand::Quit
             | SlashCommand::Exit
+            | SlashCommand::Login
             | SlashCommand::Logout
             | SlashCommand::Mention
             | SlashCommand::Skills

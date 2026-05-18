@@ -7,6 +7,7 @@ use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
 use codex_features::Stage;
+use codex_model_provider_info::ModelProviderInfo;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -2493,6 +2494,58 @@ async fn model_picker_hides_show_in_picker_false_models_from_cache() {
     assert!(
         !popup.contains("test-hidden-model"),
         "expected hidden model to be excluded from picker:\n{popup}"
+    );
+}
+
+#[tokio::test]
+async fn github_copilot_model_picker_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("claude-sonnet-4.5")).await;
+    chat.config.model_provider = ModelProviderInfo::create_github_copilot_provider();
+    let preset = |slug: &str, display_name: &str, vendor: &str| ModelPreset {
+        id: slug.to_string(),
+        model: slug.to_string(),
+        display_name: display_name.to_string(),
+        description: format!("{display_name} via GitHub Copilot ({vendor})"),
+        default_reasoning_effort: ReasoningEffortConfig::Medium,
+        supported_reasoning_efforts: vec![ReasoningEffortPreset {
+            effort: ReasoningEffortConfig::Medium,
+            description: "medium".to_string(),
+        }],
+        supports_personality: false,
+        additional_speed_tiers: Vec::new(),
+        service_tiers: Vec::new(),
+        is_default: slug == "claude-sonnet-4.5",
+        upgrade: None,
+        show_in_picker: true,
+        availability_nux: None,
+        supported_in_api: true,
+        input_modalities: default_input_modalities(),
+    };
+
+    chat.open_model_popup_with_presets(vec![
+        preset("claude-sonnet-4.5", "Claude Sonnet 4.5", "anthropic"),
+        preset("gemini-2.5-pro", "Gemini 2.5 Pro", "google"),
+    ]);
+
+    let popup = render_bottom_popup(&chat, /*width*/ 88);
+    assert_chatwidget_snapshot!("github_copilot_model_picker", popup);
+}
+
+#[tokio::test]
+async fn github_copilot_empty_model_picker_suggests_login() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("claude-sonnet-4.5")).await;
+    chat.config.model_provider = ModelProviderInfo::create_github_copilot_provider();
+
+    chat.open_all_models_popup(Vec::new());
+
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Run /login github-copilot to sign in"),
+        "expected GitHub Copilot sign-in hint in:\n{rendered}"
     );
 }
 

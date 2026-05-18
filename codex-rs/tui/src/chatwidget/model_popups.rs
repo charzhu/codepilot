@@ -169,10 +169,28 @@ impl ChatWidget {
 
     pub(crate) fn open_all_models_popup(&mut self, presets: Vec<ModelPreset>) {
         if presets.is_empty() {
-            self.add_info_message(
-                "No additional models are available right now.".to_string(),
-                /*hint*/ None,
-            );
+            if self.config.model_provider.is_github_copilot() {
+                let hint = if codex_login::github_copilot_storage::load_github_copilot_auth(
+                    self.config.codex_home.as_ref(),
+                )
+                .ok()
+                .flatten()
+                .is_some()
+                {
+                    "Check your GitHub Copilot model access or try again after models finish updating."
+                } else {
+                    "Run /login github-copilot to sign in, then reopen /model."
+                };
+                self.add_info_message(
+                    "No GitHub Copilot models are available right now.".to_string(),
+                    Some(hint.to_string()),
+                );
+            } else {
+                self.add_info_message(
+                    "No additional models are available right now.".to_string(),
+                    /*hint*/ None,
+                );
+            }
             return;
         }
 
@@ -201,10 +219,12 @@ impl ChatWidget {
             });
         }
 
-        let header = self.model_menu_header(
-            "Select Model and Effort",
-            "Access legacy models by running codex -m <model_name> or in your config.toml",
-        );
+        let subtitle = if self.config.model_provider.is_github_copilot() {
+            "Models available through your GitHub Copilot account."
+        } else {
+            "Access legacy models by running codex -m <model_name> or in your config.toml"
+        };
+        let header = self.model_menu_header("Select Model and Effort", subtitle);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
             items,

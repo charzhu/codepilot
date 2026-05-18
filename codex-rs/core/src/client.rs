@@ -33,6 +33,8 @@ use std::sync::atomic::Ordering;
 
 use codex_api::ApiError;
 use codex_api::AuthProvider;
+use codex_api::ChatCompletionsClient as ApiChatCompletionsClient;
+use codex_api::ChatCompletionsOptions as ApiChatCompletionsOptions;
 use codex_api::CompactClient as ApiCompactClient;
 use codex_api::CompactionInput as ApiCompactionInput;
 use codex_api::Compression;
@@ -108,6 +110,8 @@ use tracing::warn;
 use crate::attestation::AttestationContext;
 use crate::attestation::AttestationProvider;
 use crate::attestation::X_OAI_ATTESTATION_HEADER;
+use crate::chat_completions::ChatToolNameMap;
+use crate::chat_completions::build_chat_completions_request;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::client_common::ResponseStream;
@@ -145,6 +149,7 @@ const X_CODEX_WS_STREAM_REQUEST_START_MS_CLIENT_METADATA_KEY: &str =
     "x-codex-ws-stream-request-start-ms";
 const RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE: &str = "responses_websockets=2026-02-06";
 const RESPONSES_ENDPOINT: &str = "/responses";
+const CHAT_COMPLETIONS_ENDPOINT: &str = "/chat/completions";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
 #[cfg(test)]
@@ -199,6 +204,12 @@ impl RequestRouteTelemetry {
     fn for_endpoint(endpoint: &'static str) -> Self {
         Self { endpoint }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EffectiveWireApi {
+    Responses,
+    ChatCompletions,
 }
 
 /// A session-scoped client for model-provider API calls.
@@ -765,6 +776,23 @@ impl ModelClient {
         Ok(request)
     }
 
+    fn effective_wire_api(&self, model_info: &ModelInfo) -> Result<EffectiveWireApi> {
+        if !self.state.provider.info().is_github_copilot() {
+            return match self.state.provider.info().wire_api {
+                WireApi::Responses => Ok(EffectiveWireApi::Responses),
+            };
+        }
+
+        match copilot_model_vendor(model_info).as_deref() {
+            Some(vendor) if is_openai_copilot_vendor(vendor) => Ok(EffectiveWireApi::Responses),
+            Some(_) => Ok(EffectiveWireApi::ChatCompletions),
+            None => Err(CodexErr::InvalidRequest(format!(
+                "GitHub Copilot model `{}` is missing vendor metadata; refresh models and try again",
+                model_info.slug
+            ))),
+        }
+    }
+
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
     ///
     /// WebSocket use is controlled by provider capability and session-scoped fallback state.
@@ -982,6 +1010,32 @@ impl ModelClientSession {
             },
             compression,
             turn_state: Some(Arc::clone(&self.turn_state)),
+        }
+    }
+
+    async fn build_chat_completions_options(
+        &self,
+        turn_metadata_header: Option<&str>,
+    ) -> ApiChatCompletionsOptions {
+        let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
+        let session_id = self.client.state.session_id.to_string();
+        let thread_id = self.client.state.thread_id.to_string();
+        ApiChatCompletionsOptions {
+            session_id: Some(session_id),
+            thread_id: Some(thread_id),
+            session_source: Some(self.client.state.session_source.clone()),
+            extra_headers: {
+                let mut headers = build_responses_headers(
+                    self.client.state.beta_features_header.as_deref(),
+                    Some(&self.turn_state),
+                    turn_metadata_header.as_ref(),
+                );
+                headers.extend(self.client.build_responses_identity_headers());
+                if let Some(header_value) = self.client.generate_attestation_header_for().await {
+                    headers.insert(X_OAI_ATTESTATION_HEADER, header_value);
+                }
+                headers
+            },
         }
     }
 
@@ -1305,6 +1359,109 @@ impl ModelClientSession {
         }
     }
 
+    /// Streams a turn via OpenAI-compatible Chat Completions for Copilot models
+    /// that do not support Responses.
+    #[allow(clippy::too_many_arguments)]
+    #[instrument(
+        name = "model_client.stream_chat_completions_api",
+        level = "info",
+        skip_all,
+        fields(
+            model = %model_info.slug,
+            wire_api = "chat_completions",
+            transport = "chat_completions_http",
+            http.method = "POST",
+            api.path = "chat/completions",
+            turn.has_metadata_header = turn_metadata_header.is_some()
+        )
+    )]
+    async fn stream_chat_completions_api(
+        &self,
+        prompt: &Prompt,
+        model_info: &ModelInfo,
+        session_telemetry: &SessionTelemetry,
+        turn_metadata_header: Option<&str>,
+        inference_trace: &InferenceTraceContext,
+    ) -> Result<ResponseStream> {
+        let auth_manager = self.client.state.provider.auth_manager();
+        let mut auth_recovery = auth_manager
+            .as_ref()
+            .map(AuthManager::unauthorized_recovery);
+        let mut pending_retry = PendingUnauthorizedRetry::default();
+        loop {
+            let client_setup = self.client.current_client_setup().await?;
+            let transport = ReqwestTransport::new(build_reqwest_client());
+            let request_auth_context = AuthRequestTelemetryContext::new(
+                client_setup.auth.as_ref().map(CodexAuth::auth_mode),
+                client_setup.api_auth.as_ref(),
+                pending_retry,
+            );
+            let (request_telemetry, sse_telemetry) = Self::build_streaming_telemetry(
+                session_telemetry,
+                request_auth_context,
+                RequestRouteTelemetry::for_endpoint(CHAT_COMPLETIONS_ENDPOINT),
+                self.client.state.auth_env_telemetry.clone(),
+            );
+            let mut options = self
+                .build_chat_completions_options(turn_metadata_header)
+                .await;
+
+            let request = build_chat_completions_request(prompt, model_info)?;
+            let inference_trace_attempt = inference_trace.start_attempt();
+            inference_trace_attempt.add_request_headers(&mut options.extra_headers);
+            inference_trace_attempt.record_started(&request.body);
+            let client = ApiChatCompletionsClient::new(
+                transport,
+                client_setup.api_provider,
+                client_setup.api_auth,
+            )
+            .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+            let stream_result = client.stream_request(request.body, options).await;
+
+            match stream_result {
+                Ok(stream) => {
+                    return Ok(map_chat_response_stream(
+                        stream,
+                        session_telemetry.clone(),
+                        inference_trace_attempt,
+                        request.tool_names,
+                    ));
+                }
+                Err(ApiError::Transport(
+                    unauthorized_transport @ TransportError::Http { status, .. },
+                )) if status == StatusCode::UNAUTHORIZED => {
+                    let response_debug_context =
+                        extract_response_debug_context(&unauthorized_transport);
+                    inference_trace_attempt.record_failed(
+                        &unauthorized_transport,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    pending_retry = PendingUnauthorizedRetry::from_recovery(
+                        handle_unauthorized(
+                            unauthorized_transport,
+                            &mut auth_recovery,
+                            session_telemetry,
+                        )
+                        .await?,
+                    );
+                    continue;
+                }
+                Err(err) => {
+                    let response_debug_context =
+                        extract_response_debug_context_from_api_error(&err);
+                    let err = map_api_error(err);
+                    inference_trace_attempt.record_failed(
+                        &err,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    return Err(err);
+                }
+            }
+        }
+    }
+
     /// Streams a turn via the Responses API over WebSocket transport.
     #[allow(clippy::too_many_arguments)]
     #[instrument(
@@ -1555,9 +1712,9 @@ impl ModelClientSession {
         turn_metadata_header: Option<&str>,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
-        let wire_api = self.client.state.provider.info().wire_api;
+        let wire_api = self.client.effective_wire_api(model_info)?;
         match wire_api {
-            WireApi::Responses => {
+            EffectiveWireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
                     let request_trace = current_span_w3c_trace_context();
                     match self
@@ -1589,6 +1746,16 @@ impl ModelClientSession {
                     effort,
                     summary,
                     service_tier,
+                    turn_metadata_header,
+                    inference_trace,
+                )
+                .await
+            }
+            EffectiveWireApi::ChatCompletions => {
+                self.stream_chat_completions_api(
+                    prompt,
+                    model_info,
+                    session_telemetry,
                     turn_metadata_header,
                     inference_trace,
                 )
@@ -1731,6 +1898,125 @@ fn map_response_stream(
         session_telemetry,
         inference_trace_attempt,
     )
+}
+
+fn map_chat_response_stream(
+    api_stream: codex_api::ResponseStream,
+    session_telemetry: SessionTelemetry,
+    inference_trace_attempt: InferenceTraceAttempt,
+    tool_names: ChatToolNameMap,
+) -> ResponseStream {
+    let codex_api::ResponseStream {
+        rx_event,
+        upstream_request_id,
+    } = api_stream;
+    let api_stream = codex_api::ResponseStream {
+        rx_event,
+        upstream_request_id: None,
+    }
+    .map(move |event| event.map(|event| restore_chat_tool_names(event, &tool_names)));
+    map_response_events(
+        upstream_request_id,
+        api_stream,
+        session_telemetry,
+        inference_trace_attempt,
+    )
+    .0
+}
+
+fn restore_chat_tool_names(event: ResponseEvent, tool_names: &ChatToolNameMap) -> ResponseEvent {
+    match event {
+        ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+            id,
+            name,
+            arguments,
+            call_id,
+            ..
+        }) => {
+            let (namespace, name) = tool_names.unflatten(&name);
+            ResponseEvent::OutputItemDone(ResponseItem::FunctionCall {
+                id,
+                name,
+                namespace,
+                arguments,
+                call_id,
+            })
+        }
+        event => event,
+    }
+}
+
+fn copilot_model_vendor(model_info: &ModelInfo) -> Option<String> {
+    let metadata_vendor = model_info
+        .experimental_supported_tools
+        .iter()
+        .find_map(|tool| tool.strip_prefix("github_copilot_vendor:"))
+        .map(str::trim)
+        .filter(|vendor| !vendor.is_empty())
+        .map(normalize_copilot_vendor)
+        .or_else(|| {
+            let description = model_info.description.as_deref()?;
+            let (_, vendor) = description.rsplit_once("via GitHub Copilot (")?;
+            vendor
+                .strip_suffix(')')
+                .map(str::trim)
+                .filter(|vendor| !vendor.is_empty())
+                .map(normalize_copilot_vendor)
+        });
+
+    if metadata_vendor
+        .as_deref()
+        .map(is_openai_copilot_vendor)
+        .unwrap_or(true)
+        && let Some(vendor) = non_openai_copilot_vendor_from_slug(&model_info.slug)
+    {
+        return Some(vendor);
+    }
+
+    metadata_vendor
+}
+
+fn normalize_copilot_vendor(vendor: &str) -> String {
+    vendor.trim().to_ascii_lowercase().replace([' ', '_'], "-")
+}
+
+fn is_openai_copilot_vendor(vendor: &str) -> bool {
+    matches!(
+        normalize_copilot_vendor(vendor).as_str(),
+        "openai" | "open-ai"
+    )
+}
+
+fn non_openai_copilot_vendor_from_slug(slug: &str) -> Option<String> {
+    let family = copilot_model_family_from_slug(slug)?;
+    if is_openai_model_family(&family) {
+        None
+    } else {
+        Some(family)
+    }
+}
+
+fn copilot_model_family_from_slug(slug: &str) -> Option<String> {
+    let normalized = slug.trim().to_ascii_lowercase().replace('_', "-");
+    let model = normalized
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or(normalized.as_str());
+    let family = model.split('-').next()?;
+    (!family.is_empty()).then(|| family.to_string())
+}
+
+fn is_openai_model_family(family: &str) -> bool {
+    if matches!(
+        family,
+        "chatgpt" | "codex" | "computer" | "dall" | "gpt" | "openai" | "text"
+    ) || family.starts_with("gpt")
+    {
+        return true;
+    }
+
+    let mut chars = family.chars();
+    matches!(chars.next(), Some('o')) && chars.next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 fn map_response_events<S>(

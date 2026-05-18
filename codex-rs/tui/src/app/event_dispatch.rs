@@ -310,6 +310,33 @@ impl App {
                         .add_error_message(format!("Logout failed: {err}"));
                 }
             },
+            AppEvent::LoginGitHubCopilot => match app_server
+                .login_github_copilot_device_code()
+                .await
+            {
+                Ok(codex_app_server_protocol::LoginAccountResponse::GitHubCopilotDeviceCode {
+                    verification_url,
+                    user_code,
+                    ..
+                }) => {
+                    self.chat_widget.add_info_message(
+                        "Finish signing in with GitHub Copilot".to_string(),
+                        Some(format!(
+                            "Open {verification_url} and enter code {user_code}"
+                        )),
+                    );
+                }
+                Ok(other) => {
+                    self.chat_widget.add_error_message(format!(
+                        "Unexpected GitHub Copilot login response: {other:?}"
+                    ));
+                }
+                Err(err) => {
+                    tracing::error!("failed to start GitHub Copilot login: {err}");
+                    self.chat_widget
+                        .add_error_message(format!("GitHub Copilot login failed: {err}"));
+                }
+            },
             AppEvent::FatalExitRequest(message) => {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }

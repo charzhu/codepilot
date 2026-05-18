@@ -16,6 +16,7 @@ use codex_protocol::error::Result as CodexResult;
 use http::HeaderMap;
 use http::header::HeaderName;
 use http::header::HeaderValue;
+use http::header::USER_AGENT;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -42,6 +43,14 @@ pub const AMAZON_BEDROCK_DEFAULT_BASE_URL: &str =
     "https://bedrock-mantle.us-east-1.api.aws/openai/v1";
 const AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_HEADER: &str = "x-amzn-mantle-client-agent";
 const AMAZON_BEDROCK_MANTLE_CLIENT_AGENT_VALUE: &str = "codex";
+const GITHUB_COPILOT_PROVIDER_NAME: &str = "GitHub Copilot";
+pub const GITHUB_COPILOT_PROVIDER_ID: &str = "github-copilot";
+pub const GITHUB_COPILOT_DEFAULT_BASE_URL: &str = "https://api.githubcopilot.com";
+const GITHUB_COPILOT_USER_AGENT: &str = "GitHubCopilotChat/0.35.0";
+const GITHUB_COPILOT_EDITOR_VERSION: &str = "vscode/1.107.0";
+const GITHUB_COPILOT_EDITOR_PLUGIN_VERSION: &str = "copilot-chat/0.35.0";
+const GITHUB_COPILOT_INTEGRATION_ID: &str = "vscode-chat";
+const GITHUB_COPILOT_OPENAI_INTENT: &str = "conversation-edits";
 const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer supported.\nHow to fix: set `wire_api = \"responses\"` in your provider config.\nMore info: https://github.com/openai/codex/discussions/7782";
 pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
 pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
@@ -382,12 +391,59 @@ impl ModelProviderInfo {
         }
     }
 
+    pub fn create_github_copilot_provider() -> ModelProviderInfo {
+        ModelProviderInfo {
+            name: GITHUB_COPILOT_PROVIDER_NAME.into(),
+            base_url: Some(GITHUB_COPILOT_DEFAULT_BASE_URL.into()),
+            env_key: None,
+            env_key_instructions: None,
+            experimental_bearer_token: None,
+            auth: None,
+            aws: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: Some(HashMap::from([
+                (
+                    USER_AGENT.as_str().to_string(),
+                    GITHUB_COPILOT_USER_AGENT.to_string(),
+                ),
+                (
+                    "editor-version".to_string(),
+                    GITHUB_COPILOT_EDITOR_VERSION.to_string(),
+                ),
+                (
+                    "editor-plugin-version".to_string(),
+                    GITHUB_COPILOT_EDITOR_PLUGIN_VERSION.to_string(),
+                ),
+                (
+                    "copilot-integration-id".to_string(),
+                    GITHUB_COPILOT_INTEGRATION_ID.to_string(),
+                ),
+                (
+                    "openai-intent".to_string(),
+                    GITHUB_COPILOT_OPENAI_INTENT.to_string(),
+                ),
+            ])),
+            env_http_headers: None,
+            request_max_retries: None,
+            stream_max_retries: None,
+            stream_idle_timeout_ms: None,
+            websocket_connect_timeout_ms: None,
+            requires_openai_auth: false,
+            supports_websockets: false,
+        }
+    }
+
     pub fn is_openai(&self) -> bool {
         self.name == OPENAI_PROVIDER_NAME
     }
 
     pub fn is_amazon_bedrock(&self) -> bool {
         self.name == AMAZON_BEDROCK_PROVIDER_NAME
+    }
+
+    pub fn is_github_copilot(&self) -> bool {
+        self.name == GITHUB_COPILOT_PROVIDER_NAME
     }
 
     pub fn supports_remote_compaction(&self) -> bool {
@@ -412,6 +468,7 @@ pub fn built_in_model_providers(
     use ModelProviderInfo as P;
     let openai_provider = P::create_openai_provider(openai_base_url);
     let amazon_bedrock_provider = P::create_amazon_bedrock_provider(/*aws*/ None);
+    let github_copilot_provider = P::create_github_copilot_provider();
 
     // We do not want to be in the business of adjucating which third-party
     // providers are bundled with Codex CLI, so we only include the OpenAI and
@@ -420,6 +477,7 @@ pub fn built_in_model_providers(
     [
         (OPENAI_PROVIDER_ID, openai_provider),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
+        (GITHUB_COPILOT_PROVIDER_ID, github_copilot_provider),
         (
             OLLAMA_OSS_PROVIDER_ID,
             create_oss_provider(DEFAULT_OLLAMA_PORT, WireApi::Responses),

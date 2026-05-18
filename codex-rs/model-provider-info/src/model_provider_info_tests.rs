@@ -299,6 +299,40 @@ fn test_built_in_model_providers_include_amazon_bedrock() {
 }
 
 #[test]
+fn test_built_in_model_providers_include_github_copilot() {
+    let providers = built_in_model_providers(/*openai_base_url*/ None);
+
+    assert_eq!(
+        providers
+            .get(GITHUB_COPILOT_PROVIDER_ID)
+            .map(ModelProviderInfo::is_github_copilot),
+        Some(true)
+    );
+}
+
+#[test]
+fn test_github_copilot_provider_adds_required_headers() {
+    let api_provider = ModelProviderInfo::create_github_copilot_provider()
+        .to_api_provider(/*auth_mode*/ None)
+        .expect("GitHub Copilot provider should build API provider");
+
+    assert_eq!(
+        api_provider
+            .headers
+            .get("copilot-integration-id")
+            .and_then(|value| value.to_str().ok()),
+        Some(GITHUB_COPILOT_INTEGRATION_ID)
+    );
+    assert_eq!(
+        api_provider
+            .headers
+            .get("openai-intent")
+            .and_then(|value| value.to_str().ok()),
+        Some(GITHUB_COPILOT_OPENAI_INTENT)
+    );
+}
+
+#[test]
 fn test_merge_configured_model_providers_adds_custom_provider() {
     let custom_provider = ModelProviderInfo {
         name: "Custom".to_string(),

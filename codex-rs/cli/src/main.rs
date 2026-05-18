@@ -20,6 +20,7 @@ use codex_cli::run_login_with_access_token;
 use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_chatgpt;
 use codex_cli::run_login_with_device_code;
+use codex_cli::run_login_with_github_copilot;
 use codex_cli::run_logout;
 use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
@@ -417,8 +418,22 @@ struct LoginCommand {
 
 #[derive(Debug, clap::Subcommand)]
 enum LoginSubcommand {
+    /// Sign in with GitHub Copilot.
+    GithubCopilot(GitHubCopilotLoginCommand),
+
     /// Show login status.
     Status,
+}
+
+#[derive(Debug, Parser)]
+struct GitHubCopilotLoginCommand {
+    /// EXPERIMENTAL: Use a GitHub Enterprise domain such as github.example.com.
+    #[arg(long = "enterprise-domain", value_name = "DOMAIN", hide = true)]
+    enterprise_domain: Option<String>,
+
+    /// EXPERIMENTAL: Override the GitHub OAuth app client ID.
+    #[arg(long = "experimental_client-id", value_name = "CLIENT_ID", hide = true)]
+    client_id: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -836,6 +851,9 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         subcommand,
     } = MultitoolCli::parse();
 
+    let arg0 = std::env::args_os().next();
+    apply_codepilot_default_provider(arg0.as_deref(), &mut root_config_overrides);
+
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
@@ -1156,6 +1174,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_config_overrides.clone(),
             );
             match login_cli.action {
+                Some(LoginSubcommand::GithubCopilot(command)) => {
+                    run_login_with_github_copilot(
+                        login_cli.config_overrides,
+                        command.enterprise_domain,
+                        command.client_id,
+                    )
+                    .await;
+                }
                 Some(LoginSubcommand::Status) => {
                     run_login_status(login_cli.config_overrides).await;
                 }
@@ -1577,6 +1603,31 @@ fn maybe_print_under_development_feature_warning(
         "Under-development features enabled: {feature}. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in {}.",
         config_path.display()
     );
+}
+
+const CODEPILOT_DEFAULT_PROVIDER_OVERRIDE: &str = "model_provider=github-copilot";
+
+fn apply_codepilot_default_provider(
+    arg0: Option<&std::ffi::OsStr>,
+    root_config_overrides: &mut CliConfigOverrides,
+) {
+    if !arg0_is_codepilot(arg0) {
+        return;
+    }
+
+    root_config_overrides
+        .raw_overrides
+        .insert(0, CODEPILOT_DEFAULT_PROVIDER_OVERRIDE.to_string());
+}
+
+fn arg0_is_codepilot(arg0: Option<&std::ffi::OsStr>) -> bool {
+    let Some(arg0) = arg0 else {
+        return false;
+    };
+    std::path::Path::new(arg0)
+        .file_stem()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("codepilot"))
 }
 
 async fn run_debug_trace_reduce_command(cmd: DebugTraceReduceCommand) -> anyhow::Result<()> {
@@ -2205,6 +2256,47 @@ mod tests {
                 .map(std::string::ToString::to_string));
         };
         Ok(profile_v2_for_subcommand(&cli.interactive, subcommand)?.map(ToString::to_string))
+    }
+
+    #[test]
+    fn codepilot_arg0_adds_github_copilot_default_provider() {
+        let mut overrides = CliConfigOverrides::default();
+
+        apply_codepilot_default_provider(
+            Some(std::ffi::OsStr::new("codepilot.exe")),
+            &mut overrides,
+        );
+
+        assert_eq!(
+            overrides.raw_overrides,
+            vec![CODEPILOT_DEFAULT_PROVIDER_OVERRIDE.to_string()]
+        );
+    }
+
+    #[test]
+    fn codex_arg0_does_not_add_github_copilot_default_provider() {
+        let mut overrides = CliConfigOverrides::default();
+
+        apply_codepilot_default_provider(Some(std::ffi::OsStr::new("codex.exe")), &mut overrides);
+
+        assert_eq!(overrides.raw_overrides, Vec::<String>::new());
+    }
+
+    #[test]
+    fn codepilot_default_provider_has_lower_precedence_than_cli_overrides() {
+        let mut overrides = CliConfigOverrides {
+            raw_overrides: vec!["model_provider=openai".to_string()],
+        };
+
+        apply_codepilot_default_provider(Some(std::ffi::OsStr::new("codepilot")), &mut overrides);
+
+        assert_eq!(
+            overrides.raw_overrides,
+            vec![
+                CODEPILOT_DEFAULT_PROVIDER_OVERRIDE.to_string(),
+                "model_provider=openai".to_string()
+            ]
+        );
     }
 
     #[test]

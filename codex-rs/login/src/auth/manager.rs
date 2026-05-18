@@ -1390,6 +1390,29 @@ impl AuthManager {
         })
     }
 
+    pub fn external_auth_only(
+        codex_home: PathBuf,
+        external_auth: Arc<dyn ExternalAuth>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            codex_home,
+            inner: RwLock::new(CachedAuth {
+                auth: None,
+                permanent_refresh_failure: None,
+            }),
+            enable_codex_api_key_env: false,
+            auth_credentials_store_mode: AuthCredentialsStoreMode::File,
+            forced_chatgpt_workspace_id: RwLock::new(None),
+            chatgpt_base_url: None,
+            refresh_lock: Semaphore::new(/*permits*/ 1),
+            external_auth: RwLock::new(Some(external_auth)),
+        })
+    }
+
+    pub fn codex_home(&self) -> &Path {
+        &self.codex_home
+    }
+
     /// Current cached auth (clone) without attempting a refresh.
     pub fn auth_cached(&self) -> Option<CodexAuth> {
         self.inner.read().ok().and_then(|c| c.auth.clone())

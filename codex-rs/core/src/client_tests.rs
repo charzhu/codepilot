@@ -1,4 +1,5 @@
 use super::AuthRequestTelemetryContext;
+use super::EffectiveWireApi;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;
 use super::UnauthorizedRecoveryExecution;
@@ -108,6 +109,31 @@ fn test_model_info() -> ModelInfo {
     .expect("deserialize test model info")
 }
 
+fn test_github_copilot_client() -> ModelClient {
+    let thread_id = ThreadId::new();
+    ModelClient::new(
+        /*auth_manager*/ None,
+        thread_id.into(),
+        thread_id,
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        ModelProviderInfo::create_github_copilot_provider(),
+        SessionSource::Cli,
+        /*model_verbosity*/ None,
+        /*enable_request_compression*/ false,
+        /*include_timing_metrics*/ false,
+        /*beta_features_header*/ None,
+        /*attestation_provider*/ None,
+    )
+}
+
+fn test_copilot_model_info(vendor: &str) -> ModelInfo {
+    let mut model = test_model_info();
+    model.slug = format!("{vendor}-test-model");
+    model.description = Some(format!("test via GitHub Copilot ({vendor})"));
+    model.experimental_supported_tools = vec![format!("github_copilot_vendor:{vendor}")];
+    model
+}
+
 fn test_session_telemetry() -> SessionTelemetry {
     SessionTelemetry::new(
         ThreadId::new(),
@@ -121,6 +147,103 @@ fn test_session_telemetry() -> SessionTelemetry {
         "test-terminal".to_string(),
         SessionSource::Cli,
     )
+}
+
+#[test]
+fn copilot_openai_vendor_uses_responses_transport() {
+    let client = test_github_copilot_client();
+    let model = test_copilot_model_info("openai");
+
+    assert!(matches!(
+        client.effective_wire_api(&model),
+        Ok(EffectiveWireApi::Responses)
+    ));
+}
+
+#[test]
+fn copilot_openai_slugs_use_responses_transport() {
+    let client = test_github_copilot_client();
+
+    for slug in ["gpt-5.4", "o3-mini", "chatgpt-4o-latest"] {
+        let mut model = test_copilot_model_info("openai");
+        model.slug = slug.to_string();
+
+        assert!(
+            matches!(
+                client.effective_wire_api(&model),
+                Ok(EffectiveWireApi::Responses)
+            ),
+            "expected {slug} to use responses"
+        );
+    }
+}
+
+#[test]
+fn copilot_non_openai_vendors_use_chat_completions_transport() {
+    let client = test_github_copilot_client();
+
+    for vendor in ["anthropic", "google", "gemini", "mistral", "xai", "meta"] {
+        let model = test_copilot_model_info(vendor);
+        assert!(
+            matches!(
+                client.effective_wire_api(&model),
+                Ok(EffectiveWireApi::ChatCompletions)
+            ),
+            "expected {vendor} to use chat completions"
+        );
+    }
+}
+
+#[test]
+fn copilot_non_openai_slugs_override_generic_openai_metadata() {
+    let client = test_github_copilot_client();
+
+    for slug in [
+        "gemini-3.1-pro-preview",
+        "claude-sonnet-4.5",
+        "mistral-large-latest",
+        "xai/grok-4",
+        "meta/llama-3.3-70b",
+    ] {
+        let mut model = test_copilot_model_info("openai");
+        model.slug = slug.to_string();
+        model.display_name = slug.to_string();
+        model.description = Some(format!("{slug} via GitHub Copilot (OpenAI)"));
+
+        assert!(
+            matches!(
+                client.effective_wire_api(&model),
+                Ok(EffectiveWireApi::ChatCompletions)
+            ),
+            "expected {slug} to use chat completions"
+        );
+    }
+}
+
+#[test]
+fn copilot_vendor_can_be_read_from_existing_description_cache() {
+    let client = test_github_copilot_client();
+    let mut model = test_model_info();
+    model.description = Some("Gemini via GitHub Copilot (Google)".to_string());
+
+    assert!(matches!(
+        client.effective_wire_api(&model),
+        Ok(EffectiveWireApi::ChatCompletions)
+    ));
+}
+
+#[test]
+fn copilot_openai_family_missing_vendor_fails_closed() {
+    let client = test_github_copilot_client();
+    let model = test_model_info();
+
+    let err = client
+        .effective_wire_api(&model)
+        .expect_err("missing vendor should fail");
+    assert!(
+        err.to_string().contains("missing vendor metadata"),
+        "unexpected error: {err}"
+    );
 }
 
 #[derive(Default)]

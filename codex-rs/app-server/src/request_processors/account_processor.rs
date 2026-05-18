@@ -225,6 +225,9 @@ impl AccountRequestProcessor {
             LoginAccountParams::ChatgptDeviceCode => {
                 self.login_chatgpt_device_code_v2(request_id).await;
             }
+            LoginAccountParams::GitHubCopilotDeviceCode => {
+                self.login_github_copilot_device_code_v2(request_id).await;
+            }
             LoginAccountParams::ChatgptAuthTokens {
                 access_token,
                 chatgpt_account_id,
@@ -499,6 +502,90 @@ impl AccountRequestProcessor {
         })
     }
 
+    async fn login_github_copilot_device_code_v2(&self, request_id: ConnectionRequestId) {
+        let result = self.login_github_copilot_device_code_response().await;
+        self.outgoing.send_result(request_id, result).await;
+    }
+
+    async fn login_github_copilot_device_code_response(
+        &self,
+    ) -> Result<LoginAccountResponse, JSONRPCErrorError> {
+        let auth_config = GitHubCopilotAuthConfig::default();
+        let client = build_github_copilot_client();
+        let device_code = request_github_copilot_device_code(&client, &auth_config)
+            .await
+            .map_err(|err| internal_error(format!("failed to request device code: {err}")))?;
+        let login_id = Uuid::new_v4();
+        let cancel = CancellationToken::new();
+
+        {
+            let mut guard = self.active_login.lock().await;
+            if let Some(existing) = guard.take() {
+                drop(existing);
+            }
+            *guard = Some(ActiveLogin::DeviceCode {
+                cancel: cancel.clone(),
+                login_id,
+            });
+        }
+
+        let verification_url = device_code
+            .verification_uri_complete
+            .clone()
+            .unwrap_or_else(|| device_code.verification_uri.clone());
+        let user_code = device_code.user_code.clone();
+        let outgoing_clone = self.outgoing.clone();
+        let active_login = self.active_login.clone();
+        let codex_home = self.config.codex_home.clone();
+        tokio::spawn(async move {
+            let (success, error_msg) = tokio::select! {
+                _ = cancel.cancelled() => {
+                    (false, Some("Login was not completed".to_string()))
+                }
+                r = wait_for_github_copilot_device_flow(&client, &auth_config, &device_code) => {
+                    match r.and_then(|auth| {
+                        save_github_copilot_auth(&codex_home, &auth)?;
+                        Ok(())
+                    }) {
+                        Ok(()) => (true, None),
+                        Err(err) => (false, Some(err.to_string())),
+                    }
+                }
+            };
+
+            let payload_v2 = AccountLoginCompletedNotification {
+                login_id: Some(login_id.to_string()),
+                success,
+                error: error_msg,
+            };
+            outgoing_clone
+                .send_server_notification(ServerNotification::AccountLoginCompleted(payload_v2))
+                .await;
+
+            if success {
+                outgoing_clone
+                    .send_server_notification(ServerNotification::AccountUpdated(
+                        AccountUpdatedNotification {
+                            auth_mode: None,
+                            plan_type: None,
+                        },
+                    ))
+                    .await;
+            }
+
+            let mut guard = active_login.lock().await;
+            if guard.as_ref().map(ActiveLogin::login_id) == Some(login_id) {
+                *guard = None;
+            }
+        });
+
+        Ok(LoginAccountResponse::GitHubCopilotDeviceCode {
+            login_id: login_id.to_string(),
+            verification_url,
+            user_code,
+        })
+    }
+
     async fn cancel_login_chatgpt_common(
         &self,
         login_id: Uuid,
@@ -682,6 +769,8 @@ impl AccountRequestProcessor {
                 return Err(internal_error(format!("logout failed: {err}")));
             }
         }
+        delete_github_copilot_auth(&self.config.codex_home)
+            .map_err(|err| internal_error(format!("GitHub Copilot logout failed: {err}")))?;
 
         Self::maybe_refresh_remote_installed_plugins_cache_for_current_config(
             &self.config_manager,
