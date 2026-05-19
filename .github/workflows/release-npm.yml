@@ -63,7 +63,6 @@ jobs:
           cargo build `
             --target x86_64-pc-windows-msvc `
             --release `
-            --bin codepilot `
             --bin codex `
             --bin codex-windows-sandbox-setup `
             --bin codex-command-runner
@@ -84,7 +83,6 @@ jobs:
           $pathDir = Join-Path $targetRoot 'path'
           New-Item -ItemType Directory -Force -Path $codexDir, $pathDir | Out-Null
 
-          Copy-Item (Join-Path $releaseDir 'codepilot.exe') (Join-Path $codexDir 'codepilot.exe')
           Copy-Item (Join-Path $releaseDir 'codex.exe') (Join-Path $codexDir 'codex.exe')
           Copy-Item (Join-Path $releaseDir 'codex-windows-sandbox-setup.exe') (Join-Path $codexDir 'codex-windows-sandbox-setup.exe')
           Copy-Item (Join-Path $releaseDir 'codex-command-runner.exe') (Join-Path $codexDir 'codex-command-runner.exe')

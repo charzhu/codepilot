@@ -15,6 +15,7 @@ REPO_ROOT = CODEX_CLI_ROOT.parent
 RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / "npm"
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
 CODEPILOT_NPM_NAME = "@charzhu/codepilot"
+CODEPILOT_PLATFORM_POSTINSTALL = "copy-codepilot-exe.cjs"
 
 CODEPILOT_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
     "codepilot-win32-x64": {
@@ -33,7 +34,7 @@ PACKAGE_EXPANSIONS: dict[str, list[str]] = {
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "codepilot": [],
     "codepilot-win32-x64": [
-        "codepilot",
+        "codex",
         "rg",
         "codex-windows-sandbox-setup",
         "codex-command-runner",
@@ -240,7 +241,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
             "license": codex_package_json.get("license", "Apache-2.0"),
             "os": [platform_package["os"]],
             "cpu": [platform_package["cpu"]],
-            "files": ["vendor"],
+            "files": ["vendor", "scripts"],
             "repository": codex_package_json.get("repository"),
         }
 
@@ -251,6 +252,16 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         package_manager = codex_package_json.get("packageManager")
         if isinstance(package_manager, str):
             package_json["packageManager"] = package_manager
+
+        scripts_dir = staging_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(
+            CODEX_CLI_ROOT / "scripts" / "npm" / CODEPILOT_PLATFORM_POSTINSTALL,
+            scripts_dir / CODEPILOT_PLATFORM_POSTINSTALL,
+        )
+        package_json["scripts"] = {
+            "postinstall": f"node scripts/{CODEPILOT_PLATFORM_POSTINSTALL}"
+        }
     elif package == "codex-responses-api-proxy":
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)

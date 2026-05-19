@@ -54,6 +54,12 @@ if (!vendorRoot) {
 
 const archRoot = path.join(vendorRoot, TARGET_TRIPLE);
 const binaryPath = path.join(archRoot, "codex", codepilotBinaryName);
+if (!existsSync(binaryPath)) {
+  const updateCommand = installCommand();
+  throw new Error(
+    `Missing codepilot.exe at ${binaryPath}. Reinstall Codepilot so the platform package postinstall step can create it: ${updateCommand}`,
+  );
+}
 
 function getUpdatedPath(newDirs) {
   const existingPath = process.env.PATH || "";
