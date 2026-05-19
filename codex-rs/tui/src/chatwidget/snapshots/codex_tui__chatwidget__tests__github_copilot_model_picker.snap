@@ -1,8 +1,9 @@
 ---
 source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 2659
 expression: popup
 ---
-  Select Model and Effort
+  Select Model
   Models available through your GitHub Copilot account.
 
 › 1. claude-sonnet-4.5 (current)  Claude Sonnet 4.5 via GitHub Copilot (anthropic)

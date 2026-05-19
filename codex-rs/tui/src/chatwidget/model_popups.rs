@@ -129,7 +129,7 @@ impl ChatWidget {
 
             let is_current = !items.iter().any(|item| item.is_current);
             let description = Some(format!(
-                "Choose a specific model and reasoning level (current: {current_label})"
+                "Choose a specific model (current: {current_label})"
             ));
 
             items.push(SelectionItem {
@@ -198,23 +198,20 @@ impl ChatWidget {
         for preset in presets.into_iter() {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
-            let is_current = preset.model.as_str() == self.current_model();
-            let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
-            let preset_for_action = preset.clone();
-            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
-                let preset_for_event = preset_for_action.clone();
-                tx.send(AppEvent::OpenReasoningPopup {
-                    model: preset_for_event,
-                });
-            })];
+            let model = preset.model.clone();
+            let effort = Some(preset.default_reasoning_effort);
+            let is_current = model.as_str() == self.current_model();
+            let should_prompt_plan_mode_scope =
+                self.should_prompt_plan_mode_reasoning_scope(model.as_str(), effort);
+            let actions =
+                Self::model_selection_actions(model.clone(), effort, should_prompt_plan_mode_scope);
             items.push(SelectionItem {
-                name: preset.model.clone(),
+                name: model,
                 description,
                 is_current,
                 is_default: preset.is_default,
                 actions,
-                dismiss_on_select: single_supported_effort,
-                dismiss_parent_on_child_accept: !single_supported_effort,
+                dismiss_on_select: true,
                 ..Default::default()
             });
         }
@@ -224,7 +221,7 @@ impl ChatWidget {
         } else {
             "Access legacy models by running codex -m <model_name> or in your config.toml"
         };
-        let header = self.model_menu_header("Select Model and Effort", subtitle);
+        let header = self.model_menu_header("Select Model", subtitle);
         self.bottom_pane.show_selection_view(SelectionViewParams {
             footer_hint: Some(self.bottom_pane.standard_popup_hint_line()),
             items,
@@ -363,6 +360,7 @@ impl ChatWidget {
     }
 
     /// Open a popup to choose the reasoning effort (stage 2) for the given model.
+    #[cfg(test)]
     pub(crate) fn open_reasoning_popup(&mut self, preset: ModelPreset) {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
         let supported = preset.supported_reasoning_efforts;
@@ -550,6 +548,7 @@ impl ChatWidget {
             .send(AppEvent::UpdateReasoningEffort(effort));
     }
 
+    #[cfg(test)]
     fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
         self.apply_model_and_effort_without_persist(model.clone(), effort);
         self.app_event_tx
