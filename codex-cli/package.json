@@ -3,7 +3,8 @@
   "version": "0.0.0-dev",
   "license": "Apache-2.0",
   "bin": {
-    "codepilot": "bin/codepilot.js"
+    "codepilot": "bin/codepilot.js",
+    "codex": "bin/codex.js"
   },
   "type": "module",
   "engines": {
@@ -11,6 +12,7 @@
   },
   "files": [
     "bin/codepilot.js",
+    "bin/codex.js",
     "bin/rg",
     "vendor"
   ],

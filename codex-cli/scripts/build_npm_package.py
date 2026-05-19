@@ -217,6 +217,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         bin_dir = staging_dir / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(CODEX_CLI_ROOT / "bin" / "codepilot.js", bin_dir / "codepilot.js")
+        shutil.copy2(CODEX_CLI_ROOT / "bin" / "codex.js", bin_dir / "codex.js")
         rg_manifest = CODEX_CLI_ROOT / "bin" / "rg"
         if rg_manifest.exists():
             shutil.copy2(rg_manifest, bin_dir / "rg")
@@ -273,7 +274,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         package_json["version"] = version
 
     if package == "codepilot":
-        package_json["files"] = ["bin/codepilot.js", "bin/rg"]
+        package_json["files"] = ["bin/codepilot.js", "bin/codex.js", "bin/rg"]
         package_json["optionalDependencies"] = {
             CODEPILOT_PLATFORM_PACKAGES[platform_package]["npm_name"]: version
             for platform_package in PACKAGE_EXPANSIONS["codepilot"]
