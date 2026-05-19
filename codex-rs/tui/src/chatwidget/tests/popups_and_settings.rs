@@ -2497,6 +2497,134 @@ async fn model_picker_hides_show_in_picker_false_models_from_cache() {
     );
 }
 
+fn model_picker_test_preset(
+    slug: &str,
+    default_reasoning_effort: ReasoningEffortConfig,
+    supported_reasoning_efforts: Vec<ReasoningEffortConfig>,
+) -> ModelPreset {
+    ModelPreset {
+        id: slug.to_string(),
+        model: slug.to_string(),
+        display_name: slug.to_string(),
+        description: format!("{slug} description"),
+        default_reasoning_effort,
+        supported_reasoning_efforts: supported_reasoning_efforts
+            .into_iter()
+            .map(|effort| ReasoningEffortPreset {
+                effort,
+                description: format!("{effort}"),
+            })
+            .collect(),
+        supports_personality: false,
+        additional_speed_tiers: Vec::new(),
+        service_tiers: Vec::new(),
+        is_default: false,
+        upgrade: None,
+        show_in_picker: true,
+        availability_nux: None,
+        supported_in_api: true,
+        input_modalities: default_input_modalities(),
+    }
+}
+
+#[tokio::test]
+async fn model_picker_single_effort_selection_closes_all_model_popups() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("codex-auto-fast")).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.open_model_popup_with_presets(vec![
+        model_picker_test_preset(
+            "codex-auto-fast",
+            ReasoningEffortConfig::Medium,
+            vec![ReasoningEffortConfig::Medium],
+        ),
+        model_picker_test_preset(
+            "single-effort-model",
+            ReasoningEffortConfig::Medium,
+            vec![ReasoningEffortConfig::Medium],
+        ),
+    ]);
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let all_models_event = rx.try_recv().expect("open all models event");
+    match all_models_event {
+        AppEvent::OpenAllModelsPopup { models } => chat.open_all_models_popup(models),
+        event => panic!("expected OpenAllModelsPopup, got {event:?}"),
+    }
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(!chat.bottom_pane.has_active_view());
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events.iter().any(
+            |event| matches!(event, AppEvent::UpdateModel(model) if model == "single-effort-model")
+        ),
+        "expected model update event; events: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AppEvent::PersistModelSelection {
+                model,
+                effort: Some(ReasoningEffortConfig::Medium),
+            } if model == "single-effort-model"
+        )),
+        "expected persisted model selection event; events: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn model_picker_multi_effort_selection_closes_all_model_popups() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("codex-auto-fast")).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.open_model_popup_with_presets(vec![
+        model_picker_test_preset(
+            "codex-auto-fast",
+            ReasoningEffortConfig::Medium,
+            vec![ReasoningEffortConfig::Medium],
+        ),
+        model_picker_test_preset(
+            "multi-effort-model",
+            ReasoningEffortConfig::High,
+            vec![
+                ReasoningEffortConfig::Low,
+                ReasoningEffortConfig::Medium,
+                ReasoningEffortConfig::High,
+            ],
+        ),
+    ]);
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let all_models_event = rx.try_recv().expect("open all models event");
+    match all_models_event {
+        AppEvent::OpenAllModelsPopup { models } => chat.open_all_models_popup(models),
+        event => panic!("expected OpenAllModelsPopup, got {event:?}"),
+    }
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(!chat.bottom_pane.has_active_view());
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events.iter().any(
+            |event| matches!(event, AppEvent::UpdateModel(model) if model == "multi-effort-model")
+        ),
+        "expected model update event; events: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AppEvent::PersistModelSelection {
+                model,
+                effort: Some(ReasoningEffortConfig::High),
+            } if model == "multi-effort-model"
+        )),
+        "expected persisted model selection event; events: {events:?}"
+    );
+}
+
 #[tokio::test]
 async fn github_copilot_model_picker_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("claude-sonnet-4.5")).await;

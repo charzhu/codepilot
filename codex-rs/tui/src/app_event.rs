@@ -658,11 +658,6 @@ pub(crate) enum AppEvent {
     /// Local microphone level from a TUI-owned realtime WebRTC session.
     RealtimeWebrtcLocalAudioLevel(u16),
 
-    /// Open the reasoning selection popup after picking a model.
-    OpenReasoningPopup {
-        model: ModelPreset,
-    },
-
     /// Open the Plan-mode reasoning scope prompt for the selected model/effort.
     OpenPlanReasoningScopePrompt {
         model: String,
