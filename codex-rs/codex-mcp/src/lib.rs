@@ -7,6 +7,10 @@ pub use runtime::McpRuntimeEnvironment;
 pub use runtime::SandboxState;
 pub use tools::ToolInfo;
 
+pub use github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME;
+pub use github_copilot::GITHUB_COPILOT_MCP_SERVER_URL;
+pub use github_copilot::github_copilot_mcp_auth_available;
+pub use github_copilot::github_copilot_mcp_server_config;
 pub use mcp::CODEX_APPS_MCP_SERVER_NAME;
 pub use mcp::McpConfig;
 pub use mcp::ToolPluginProvenance;
@@ -55,6 +59,7 @@ pub(crate) mod auth_elicitation;
 pub(crate) mod codex_apps;
 pub(crate) mod connection_manager;
 pub(crate) mod elicitation;
+pub(crate) mod github_copilot;
 pub(crate) mod mcp;
 pub(crate) mod rmcp_client;
 pub(crate) mod runtime;

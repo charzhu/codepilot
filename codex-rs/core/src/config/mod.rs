@@ -1254,6 +1254,21 @@ impl Config {
         let loaded_plugins = plugins_manager.plugins_for_config(&plugins_input).await;
         let user_mcp_server_names: Vec<String> = self.mcp_servers.get().keys().cloned().collect();
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
+        let mut github_copilot_mcp_server_enabled = false;
+        if !configured_mcp_servers.contains_key(codex_mcp::GITHUB_COPILOT_MCP_SERVER_NAME)
+            && codex_mcp::github_copilot_mcp_auth_available(&self.codex_home)
+        {
+            let mut builtin_servers = HashMap::from([(
+                codex_mcp::GITHUB_COPILOT_MCP_SERVER_NAME.to_string(),
+                codex_mcp::github_copilot_mcp_server_config(),
+            )]);
+            filter_mcp_servers_by_requirements(
+                &mut builtin_servers,
+                self.config_layer_stack.requirements().mcp_servers.as_ref(),
+            );
+            configured_mcp_servers.extend(builtin_servers);
+            github_copilot_mcp_server_enabled = true;
+        }
         let mut plugin_ids_by_mcp_server_name = HashMap::new();
         for plugin in loaded_plugins
             .plugins()
@@ -1317,6 +1332,7 @@ impl Config {
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
             use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
+            github_copilot_mcp_server_enabled,
             client_elicitation_capability: if self.features.enabled(Feature::AuthElicitation) {
                 ElicitationCapability {
                     form: Some(FormElicitationCapability::default()),

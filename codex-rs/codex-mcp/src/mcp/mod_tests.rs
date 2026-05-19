@@ -10,6 +10,7 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GranularApprovalConfig;
+use codex_protocol::protocol::McpAuthStatus;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -28,6 +29,7 @@ fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
         codex_linux_sandbox_exe: None,
         use_legacy_landlock: false,
         apps_enabled: false,
+        github_copilot_mcp_server_enabled: false,
         client_elicitation_capability: ElicitationCapability::default(),
         configured_mcp_servers: HashMap::new(),
         plugin_ids_by_mcp_server_name: HashMap::new(),
@@ -396,4 +398,50 @@ async fn effective_mcp_servers_preserve_user_servers_and_add_codex_apps() {
         }
         other => panic!("expected streamable http transport, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn effective_mcp_servers_marks_builtin_github_copilot_for_runtime_auth() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
+    config.github_copilot_mcp_server_enabled = true;
+    config.configured_mcp_servers.insert(
+        crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME.to_string(),
+        crate::github_copilot::github_copilot_mcp_server_config(),
+    );
+
+    let servers = effective_mcp_servers(&config, /*auth*/ None);
+    let server = servers
+        .get(crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME)
+        .expect("builtin GitHub Copilot MCP should be present");
+    assert!(server.uses_github_copilot_runtime_auth());
+
+    let auth_statuses = compute_auth_statuses(
+        servers.iter(),
+        config.mcp_oauth_credentials_store_mode,
+        /*auth*/ None,
+    )
+    .await;
+    assert_eq!(
+        auth_statuses
+            .get(crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME)
+            .map(|entry| entry.auth_status),
+        Some(McpAuthStatus::BearerToken)
+    );
+}
+
+#[test]
+fn effective_mcp_servers_preserves_user_github_copilot_server_without_runtime_auth() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
+    config.configured_mcp_servers.insert(
+        crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME.to_string(),
+        crate::github_copilot::github_copilot_mcp_server_config(),
+    );
+
+    let servers = effective_mcp_servers(&config, /*auth*/ None);
+    let server = servers
+        .get(crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME)
+        .expect("user GitHub Copilot MCP server should be present");
+    assert!(!server.uses_github_copilot_runtime_auth());
 }

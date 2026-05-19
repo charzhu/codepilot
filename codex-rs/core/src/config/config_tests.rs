@@ -5,6 +5,8 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
 use assert_matches::assert_matches;
+use chrono::TimeDelta;
+use chrono::Utc;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigLayerEntry;
 use codex_config::ProfileV2Name;
@@ -65,6 +67,8 @@ use codex_core_plugins::PluginsManager;
 use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
+use codex_login::github_copilot_storage::GitHubCopilotAuth;
+use codex_login::github_copilot_storage::save_github_copilot_auth;
 use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
@@ -166,6 +170,19 @@ fn http_mcp(url: &str) -> McpServerConfig {
         oauth_resource: None,
         tools: HashMap::new(),
     }
+}
+
+fn save_test_github_copilot_auth(codex_home: &Path) -> std::io::Result<()> {
+    save_github_copilot_auth(
+        codex_home,
+        &GitHubCopilotAuth::new(
+            "github-token".to_string(),
+            "copilot-token".to_string(),
+            Utc::now() + TimeDelta::minutes(30),
+            "https://api.githubcopilot.com".to_string(),
+            None,
+        ),
+    )
 }
 
 async fn derive_legacy_sandbox_policy_for_test(
@@ -3930,6 +3947,117 @@ enabled = true
         Some(&http_mcp("https://user.example/mcp"))
     );
     assert!(mcp_config.plugin_ids_by_mcp_server_name.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn to_mcp_config_adds_builtin_github_copilot_mcp_when_auth_exists() -> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+    save_test_github_copilot_auth(codex_home.path())?;
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .build()
+        .await?;
+    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert!(mcp_config.github_copilot_mcp_server_enabled);
+    assert_eq!(
+        mcp_config
+            .configured_mcp_servers
+            .get(codex_mcp::GITHUB_COPILOT_MCP_SERVER_NAME),
+        Some(&codex_mcp::github_copilot_mcp_server_config())
+    );
+    assert!(mcp_config.plugin_ids_by_mcp_server_name.is_empty());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn to_mcp_config_omits_builtin_github_copilot_mcp_without_auth() -> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .build()
+        .await?;
+    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert!(!mcp_config.github_copilot_mcp_server_enabled);
+    assert!(
+        !mcp_config
+            .configured_mcp_servers
+            .contains_key(codex_mcp::GITHUB_COPILOT_MCP_SERVER_NAME)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn to_mcp_config_user_github_copilot_mcp_shadows_builtin() -> anyhow::Result<()> {
+    let codex_home = TempDir::new()?;
+    save_test_github_copilot_auth(codex_home.path())?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"
+[mcp_servers.github-mcp-server]
+url = "https://user.example/mcp"
+"#,
+    )?;
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .build()
+        .await?;
+    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert!(!mcp_config.github_copilot_mcp_server_enabled);
+    assert_eq!(
+        mcp_config
+            .configured_mcp_servers
+            .get(codex_mcp::GITHUB_COPILOT_MCP_SERVER_NAME),
+        Some(&http_mcp("https://user.example/mcp"))
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn to_mcp_config_applies_mcp_requirements_to_builtin_github_copilot_mcp() -> anyhow::Result<()>
+{
+    let codex_home = TempDir::new()?;
+    save_test_github_copilot_auth(codex_home.path())?;
+    let requirements = codex_config::ConfigRequirementsToml {
+        mcp_servers: Some(BTreeMap::new()),
+        ..Default::default()
+    };
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .cloud_requirements(CloudRequirementsLoader::new(async move {
+            Ok(Some(requirements))
+        }))
+        .build()
+        .await?;
+    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert!(mcp_config.github_copilot_mcp_server_enabled);
+    assert_eq!(
+        mcp_config
+            .configured_mcp_servers
+            .get(codex_mcp::GITHUB_COPILOT_MCP_SERVER_NAME)
+            .map(|server| (server.enabled, server.disabled_reason.clone())),
+        Some((
+            false,
+            Some(McpServerDisabledReason::Requirements {
+                source: RequirementSource::CloudRequirements,
+            })
+        ))
+    );
 
     Ok(())
 }

@@ -564,7 +564,9 @@ async fn make_rmcp_client(
     runtime_auth_provider: Option<SharedAuthProvider>,
 ) -> Result<RmcpClient, StartupOutcomeError> {
     let config = match server.launch() {
-        McpServerLaunch::Configured(config) => config.as_ref().clone(),
+        McpServerLaunch::Configured(config) | McpServerLaunch::GitHubCopilot(config) => {
+            config.as_ref().clone()
+        }
     };
     let McpServerConfig {
         transport,

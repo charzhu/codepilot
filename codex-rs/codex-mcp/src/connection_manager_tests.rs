@@ -911,6 +911,21 @@ fn mcp_init_error_display_prompts_for_github_pat() {
 }
 
 #[test]
+fn mcp_init_error_display_prompts_for_github_copilot_login() {
+    let server_name = crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME;
+    let entry = McpAuthStatusEntry {
+        config: Some(crate::github_copilot::github_copilot_mcp_server_config()),
+        auth_status: McpAuthStatus::Unsupported,
+    };
+    let err: StartupOutcomeError = anyhow::anyhow!("Auth required for server").into();
+
+    let display = mcp_init_error_display(server_name, Some(&entry), &err);
+
+    let expected = "GitHub Copilot MCP is not authenticated. Run `codex login github-copilot` or `/login github-copilot`, then restart Codepilot.".to_string();
+    assert_eq!(expected, display);
+}
+
+#[test]
 fn mcp_init_error_display_prompts_for_login_when_auth_required() {
     let server_name = "example";
     let err: StartupOutcomeError = anyhow::anyhow!("Auth required for server").into();

@@ -18,6 +18,9 @@ use crate::codex_apps::CodexAppsToolsCacheKey;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
 use crate::elicitation::ElicitationReviewerHandle;
+use crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME;
+use crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_URL;
+use crate::github_copilot::github_copilot_mcp_auth_provider;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::rmcp_client::AsyncManagedClient;
@@ -200,6 +203,23 @@ impl McpConnectionManager {
             .filter(|auth| auth.uses_codex_backend())
             .map(codex_model_provider::auth_provider_from_auth);
         let mcp_servers = mcp_servers.clone();
+        let github_copilot_runtime_auth_provider = if mcp_servers
+            .iter()
+            .any(|(_, server)| server.enabled() && server.uses_github_copilot_runtime_auth())
+        {
+            match github_copilot_mcp_auth_provider(&codex_home).await {
+                Ok(auth_provider) => auth_provider,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to load GitHub Copilot auth for builtin MCP"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         for (server_name, server) in mcp_servers
             .into_iter()
             .filter(|(_, server)| server.enabled())
@@ -236,6 +256,8 @@ impl McpConnectionManager {
             let runtime_auth_provider =
                 if server_name == CODEX_APPS_MCP_SERVER_NAME && !uses_env_bearer_token {
                     codex_apps_auth_provider.clone()
+                } else if server.uses_github_copilot_runtime_auth() {
+                    github_copilot_runtime_auth_provider.clone()
                 } else {
                     None
                 };
@@ -719,6 +741,18 @@ fn mcp_init_error_display(
     err: &StartupOutcomeError,
 ) -> String {
     if let Some(McpServerTransportConfig::StreamableHttp {
+        url,
+        bearer_token_env_var,
+        http_headers,
+        ..
+    }) = entry.and_then(|entry| entry.config.as_ref().map(|config| &config.transport))
+        && server_name == GITHUB_COPILOT_MCP_SERVER_NAME
+        && url == GITHUB_COPILOT_MCP_SERVER_URL
+        && bearer_token_env_var.is_none()
+        && http_headers.as_ref().map(HashMap::is_empty).unwrap_or(true)
+    {
+        "GitHub Copilot MCP is not authenticated. Run `codex login github-copilot` or `/login github-copilot`, then restart Codepilot.".to_string()
+    } else if let Some(McpServerTransportConfig::StreamableHttp {
         url,
         bearer_token_env_var,
         http_headers,

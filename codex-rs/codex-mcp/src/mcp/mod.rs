@@ -38,6 +38,7 @@ use serde_json::Value;
 
 use crate::codex_apps::codex_apps_tools_cache_key;
 use crate::connection_manager::McpConnectionManager;
+use crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME;
 use crate::runtime::McpRuntimeEnvironment;
 use crate::server::EffectiveMcpServer;
 
@@ -132,6 +133,9 @@ pub struct McpConfig {
     /// ChatGPT auth is checked separately at runtime before the host-owned apps
     /// MCP server is added.
     pub apps_enabled: bool,
+    /// Whether `configured_mcp_servers` contains the Codepilot-owned GitHub
+    /// Copilot readonly MCP server.
+    pub github_copilot_mcp_server_enabled: bool,
     /// Client-side elicitation capabilities advertised during MCP initialization.
     pub client_elicitation_capability: ElicitationCapability,
     /// Config-backed MCP servers keyed by server name.
@@ -249,7 +253,16 @@ pub fn effective_mcp_servers_from_configured(
 ) -> HashMap<String, EffectiveMcpServer> {
     let servers = configured_servers
         .into_iter()
-        .map(|(name, server)| (name, EffectiveMcpServer::configured(server)))
+        .map(|(name, server)| {
+            let effective_server = if config.github_copilot_mcp_server_enabled
+                && name == GITHUB_COPILOT_MCP_SERVER_NAME
+            {
+                EffectiveMcpServer::github_copilot(server)
+            } else {
+                EffectiveMcpServer::configured(server)
+            };
+            (name, effective_server)
+        })
         .collect::<HashMap<_, _>>();
     with_codex_apps_mcp(servers, auth, config)
 }

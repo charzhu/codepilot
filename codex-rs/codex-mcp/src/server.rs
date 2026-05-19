@@ -5,6 +5,7 @@ use codex_config::McpServerTransportConfig;
 #[derive(Debug, Clone)]
 pub(crate) enum McpServerLaunch {
     Configured(Box<McpServerConfig>),
+    GitHubCopilot(Box<McpServerConfig>),
 }
 
 /// MCP server after runtime additions have been applied.
@@ -20,25 +21,41 @@ impl EffectiveMcpServer {
         }
     }
 
+    pub(crate) fn github_copilot(config: McpServerConfig) -> Self {
+        Self {
+            launch: McpServerLaunch::GitHubCopilot(Box::new(config)),
+        }
+    }
+
     pub(crate) fn launch(&self) -> &McpServerLaunch {
         &self.launch
     }
 
     pub fn configured_config(&self) -> Option<&McpServerConfig> {
         match &self.launch {
-            McpServerLaunch::Configured(config) => Some(config.as_ref()),
+            McpServerLaunch::Configured(config) | McpServerLaunch::GitHubCopilot(config) => {
+                Some(config.as_ref())
+            }
         }
+    }
+
+    pub(crate) fn uses_github_copilot_runtime_auth(&self) -> bool {
+        matches!(&self.launch, McpServerLaunch::GitHubCopilot(_))
     }
 
     pub fn enabled(&self) -> bool {
         match &self.launch {
-            McpServerLaunch::Configured(config) => config.enabled,
+            McpServerLaunch::Configured(config) | McpServerLaunch::GitHubCopilot(config) => {
+                config.enabled
+            }
         }
     }
 
     pub fn required(&self) -> bool {
         match &self.launch {
-            McpServerLaunch::Configured(config) => config.required,
+            McpServerLaunch::Configured(config) | McpServerLaunch::GitHubCopilot(config) => {
+                config.required
+            }
         }
     }
 }
@@ -80,7 +97,7 @@ pub(crate) struct McpServerMetadata {
 impl From<&EffectiveMcpServer> for McpServerMetadata {
     fn from(server: &EffectiveMcpServer) -> Self {
         match server.launch() {
-            McpServerLaunch::Configured(config) => Self {
+            McpServerLaunch::Configured(config) | McpServerLaunch::GitHubCopilot(config) => Self {
                 pollutes_memory: true,
                 origin: McpServerOrigin::from_transport(&config.transport),
                 supports_parallel_tool_calls: config.supports_parallel_tool_calls,

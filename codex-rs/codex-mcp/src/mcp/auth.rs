@@ -138,17 +138,18 @@ where
     let futures = servers.into_iter().map(|(name, server)| {
         let name = name.clone();
         let config = server.configured_config().cloned();
-        let has_runtime_auth = name == CODEX_APPS_MCP_SERVER_NAME
-            && auth.is_some_and(CodexAuth::uses_codex_backend)
-            && config.as_ref().is_some_and(|config| {
-                matches!(
-                    &config.transport,
-                    McpServerTransportConfig::StreamableHttp {
-                        bearer_token_env_var: None,
-                        ..
-                    }
-                )
-            });
+        let has_runtime_auth = server.uses_github_copilot_runtime_auth()
+            || (name == CODEX_APPS_MCP_SERVER_NAME
+                && auth.is_some_and(CodexAuth::uses_codex_backend)
+                && config.as_ref().is_some_and(|config| {
+                    matches!(
+                        &config.transport,
+                        McpServerTransportConfig::StreamableHttp {
+                            bearer_token_env_var: None,
+                            ..
+                        }
+                    )
+                }));
         async move {
             let auth_status = match config.as_ref() {
                 Some(config) => {
