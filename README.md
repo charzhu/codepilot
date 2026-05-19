@@ -1,60 +1,99 @@
-<p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
+# Codepilot
+
+<p align="center"><code>npm i -g @charzhu/codepilot</code></p>
+<p align="center"><strong>Codepilot</strong> is a Codex CLI distribution with GitHub Copilot-oriented integrations and MCP discovery.</p>
 <p align="center">
   <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
 </p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+
+Codepilot is built on top of [OpenAI Codex CLI](https://github.com/openai/codex). It keeps the local coding-agent experience from upstream Codex while adding Codepilot-specific packaging and integrations.
 
 ---
 
 ## Quickstart
 
-### Installing and running Codex CLI
-
-Install globally with your preferred package manager:
+Install globally with npm:
 
 ```shell
-# Install using npm
-npm install -g @openai/codex
+npm install -g @charzhu/codepilot
 ```
+
+Then run:
 
 ```shell
-# Install using Homebrew
-brew install --cask codex
+codepilot
 ```
 
-Then simply run `codex` to get started.
+Use **Sign in with ChatGPT** when prompted to use Codepilot with your ChatGPT Plus, Pro, Business, Edu, or Enterprise plan. You can also use an API key through the same Codex configuration flow.
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+## What Codepilot adds vs upstream Codex
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+| Area | Upstream Codex CLI | Codepilot |
+| --- | --- | --- |
+| Package | `@openai/codex` | `@charzhu/codepilot` |
+| Main command | `codex` | `codepilot` |
+| Windows binary | `codex.exe` | `codepilot.exe` |
+| GitHub Copilot workflow | General Codex CLI behavior | GitHub Copilot / Copilot CLI oriented workflow support |
+| MCP startup behavior | Uses MCP servers configured directly in `config.toml` and plugins | Can discover MCP servers from other local agent configs at startup |
+| MCP discovery CLI | Not part of upstream Codex | `codepilot mcp discover` and `codepilot mcp consent ...` |
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+Codepilot still inherits the core Codex capabilities: local agent sessions, ChatGPT sign-in, sandboxing, MCP client/server support, app-server support, non-interactive `exec`, and the Rust CLI architecture.
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+## External MCP discovery
 
-</details>
+Codepilot can discover MCP servers already configured for other tools and make them available to the Codepilot agent after consent.
 
-### Using Codex with your ChatGPT plan
+Enable discovery in your `~/.codex/config.toml`:
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
+```toml
+[external_mcp_discovery]
+enabled = true
+auto_approve = "trusted"
+```
 
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
+Run discovery:
 
-## Docs
+```shell
+codepilot mcp discover
+```
 
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
+For machine-readable output:
+
+```shell
+codepilot mcp discover --json
+```
+
+Approve a pending discovered server:
+
+```shell
+codepilot mcp consent approve <name>
+```
+
+Then confirm the effective MCP list:
+
+```shell
+codepilot mcp list
+```
+
+Discovery currently scans these local sources:
+
+- Codepilot-owned overrides: `<codex_home>/mcp-discovery/own/mcp.json`
+- Claude project files: `.mcp.json`
+- GitHub Copilot CLI config: `~/.copilot/mcp-config.json`
+- Copilot plugin MCP files under `~/.copilot/installed-plugins/`
+- VS Code MCP project config: `.vscode/mcp.json`
+- Agency built-in MCP config: `~/.agency/agency.toml`
+
+Deduplication is conservative: explicit Codepilot `config.toml` entries and plugin-provided MCPs win over discovered entries, duplicate command/URL fingerprints are collapsed by priority, and self-referential MCP entries are suppressed to avoid loops. External sources stay pending unless trusted by policy or explicitly approved.
+
+## Relationship to OpenAI Codex
+
+Codepilot tracks the upstream [OpenAI Codex](https://github.com/openai/codex) project and keeps its Apache-2.0 license. Most documentation for core Codex behavior still applies unless Codepilot-specific behavior is called out here.
+
+Useful upstream docs:
+
+- [Codex Documentation](https://developers.openai.com/codex)
+- [Contributing](./docs/contributing.md)
+- [Installing & building](./docs/install.md)
 
 This repository is licensed under the [Apache-2.0 License](LICENSE).
