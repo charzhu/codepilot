@@ -153,7 +153,6 @@ impl ChatWidget {
             ..Default::default()
         });
     }
-
     fn is_auto_model(model: &str) -> bool {
         model.starts_with("codex-auto-")
     }
@@ -199,17 +198,14 @@ impl ChatWidget {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
             let model = preset.model.clone();
-            let effort = Some(preset.default_reasoning_effort);
+            let is_default = preset.is_default;
             let is_current = model.as_str() == self.current_model();
-            let should_prompt_plan_mode_scope =
-                self.should_prompt_plan_mode_reasoning_scope(model.as_str(), effort);
-            let actions =
-                Self::model_selection_actions(model.clone(), effort, should_prompt_plan_mode_scope);
+            let actions = self.all_model_selection_actions(preset);
             items.push(SelectionItem {
                 name: model,
                 description,
                 is_current,
-                is_default: preset.is_default,
+                is_default,
                 actions,
                 dismiss_on_select: true,
                 ..Default::default()
@@ -228,6 +224,25 @@ impl ChatWidget {
             header,
             ..Default::default()
         });
+    }
+
+    fn all_model_selection_actions(&self, preset: ModelPreset) -> Vec<SelectionAction> {
+        if preset.supported_reasoning_efforts.len() > 1 {
+            return vec![Box::new(move |tx| {
+                tx.send(AppEvent::OpenReasoningPopup {
+                    preset: preset.clone(),
+                });
+            })];
+        }
+
+        let model = preset.model.clone();
+        let effort = preset
+            .supported_reasoning_efforts
+            .first()
+            .map(|option| option.effort);
+        let should_prompt_plan_mode_scope =
+            self.should_prompt_plan_mode_reasoning_scope(model.as_str(), effort);
+        Self::model_selection_actions(model, effort, should_prompt_plan_mode_scope)
     }
 
     fn model_selection_actions(
@@ -360,7 +375,6 @@ impl ChatWidget {
     }
 
     /// Open a popup to choose the reasoning effort (stage 2) for the given model.
-    #[cfg(test)]
     pub(crate) fn open_reasoning_popup(&mut self, preset: ModelPreset) {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
         let supported = preset.supported_reasoning_efforts;
@@ -548,7 +562,6 @@ impl ChatWidget {
             .send(AppEvent::UpdateReasoningEffort(effort));
     }
 
-    #[cfg(test)]
     fn apply_model_and_effort(&self, model: String, effort: Option<ReasoningEffortConfig>) {
         self.apply_model_and_effort_without_persist(model.clone(), effort);
         self.app_event_tx

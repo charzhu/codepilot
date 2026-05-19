@@ -703,20 +703,32 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
     ) -> Option<Reasoning> {
-        if model_info.supports_reasoning_summaries {
-            Some(Reasoning {
-                effort: effort.or(model_info.default_reasoning_level),
-                summary: if summary == ReasoningSummaryConfig::None {
-                    None
-                } else {
-                    Some(summary)
-                },
-            })
+        let supported_efforts = &model_info.supported_reasoning_levels;
+        let selected_effort = if model_info.supports_reasoning_summaries {
+            effort
         } else {
-            None
+            effort.filter(|effort| {
+                supported_efforts
+                    .iter()
+                    .any(|preset| preset.effort == *effort)
+            })
+        };
+        let effective_effort = selected_effort.or(model_info.default_reasoning_level);
+        if effective_effort.is_none() && !model_info.supports_reasoning_summaries {
+            return None;
         }
-    }
 
+        Some(Reasoning {
+            effort: effective_effort,
+            summary: if model_info.supports_reasoning_summaries
+                && summary != ReasoningSummaryConfig::None
+            {
+                Some(summary)
+            } else {
+                None
+            },
+        })
+    }
     fn build_responses_request(
         &self,
         provider: &codex_api::Provider,

@@ -687,6 +687,39 @@ async fn refresh_available_models_refetches_when_version_mismatch() {
 }
 
 #[tokio::test]
+async fn refresh_available_models_refetches_legacy_unversioned_cache() {
+    let initial_models = vec![remote_model("old", "Old", /*priority*/ 1)];
+    let codex_home = tempdir().expect("temp dir");
+    let updated_models = vec![remote_model("new", "New", /*priority*/ 2)];
+    let endpoint = TestModelsEndpoint::new(vec![initial_models.clone(), updated_models.clone()]);
+    let manager = openai_manager_for_tests(codex_home.path().to_path_buf(), endpoint.clone());
+
+    manager
+        .refresh_available_models(RefreshStrategy::OnlineIfUncached)
+        .await
+        .expect("initial refresh succeeds");
+
+    manager
+        .cache_manager
+        .mutate_cache_for_test(|cache| {
+            cache.client_version = Some(crate::client_version_to_whole());
+        })
+        .await
+        .expect("cache mutation succeeds");
+
+    manager
+        .refresh_available_models(RefreshStrategy::OnlineIfUncached)
+        .await
+        .expect("second refresh succeeds");
+    assert_models_contain(&manager.get_remote_models().await, &updated_models);
+    assert_eq!(
+        endpoint.fetch_count(),
+        2,
+        "legacy cache version should fetch models again"
+    );
+}
+
+#[tokio::test]
 async fn refresh_available_models_drops_removed_remote_models() {
     let initial_models = vec![remote_model(
         "remote-old",

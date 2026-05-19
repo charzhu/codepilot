@@ -23,6 +23,7 @@ use tracing::info;
 
 const MODEL_CACHE_FILE: &str = "models_cache.json";
 const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(300);
+const MODEL_CACHE_SCHEMA_VERSION: u32 = 2;
 
 /// Remote endpoint used by the OpenAI-compatible model manager.
 ///
@@ -331,7 +332,7 @@ impl OpenAiModelsManager {
     }
 
     async fn fetch_and_update_models(&self) -> CoreResult<()> {
-        let client_version = crate::client_version_to_whole();
+        let client_version = model_cache_client_version();
         let (models, etag) = self.endpoint_client.list_models(&client_version).await?;
         self.apply_remote_models(models.clone()).await;
         *self.etag.write().await = etag.clone();
@@ -393,7 +394,7 @@ impl OpenAiModelsManager {
     async fn try_load_cache(&self) -> bool {
         let _timer =
             codex_otel::start_global_timer("codex.remote_models.load_cache.duration_ms", &[]);
-        let client_version = crate::client_version_to_whole();
+        let client_version = model_cache_client_version();
         info!(client_version, "models cache: evaluating cache eligibility");
         let cache = match self.cache_manager.load_fresh(&client_version).await {
             Some(cache) => cache,
@@ -461,6 +462,14 @@ fn provider_model_cache_file(provider_cache_key: &str) -> String {
         return MODEL_CACHE_FILE.to_string();
     }
     format!("models_cache.{sanitized}.json")
+}
+
+fn model_cache_client_version() -> String {
+    format!(
+        "{}:models-cache-v{}",
+        crate::client_version_to_whole(),
+        MODEL_CACHE_SCHEMA_VERSION
+    )
 }
 
 fn default_model_from_available(available: Vec<ModelPreset>) -> String {

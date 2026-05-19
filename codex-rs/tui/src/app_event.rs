@@ -669,6 +669,11 @@ pub(crate) enum AppEvent {
         models: Vec<ModelPreset>,
     },
 
+    /// Open the reasoning picker for a selected model preset.
+    OpenReasoningPopup {
+        preset: ModelPreset,
+    },
+
     /// Open the confirmation prompt before enabling full access mode.
     OpenFullAccessConfirmation {
         preset: ApprovalPreset,

@@ -27,6 +27,8 @@ use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelInfo;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::protocol::InternalSessionSource;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -246,6 +248,63 @@ fn copilot_openai_family_missing_vendor_fails_closed() {
     );
 }
 
+#[test]
+fn builds_reasoning_effort_without_summary_support() {
+    let mut model = test_model_info();
+    model.supports_reasoning_summaries = false;
+    model.default_reasoning_level = Some(ReasoningEffort::Medium);
+    model.supported_reasoning_levels = vec![ReasoningEffortPreset {
+        effort: ReasoningEffort::High,
+        description: "high".to_string(),
+    }];
+
+    let reasoning = ModelClient::build_reasoning(
+        &model,
+        Some(ReasoningEffort::High),
+        codex_protocol::config_types::ReasoningSummary::Detailed,
+    )
+    .expect("reasoning should be sent");
+
+    assert_eq!(reasoning.effort, Some(ReasoningEffort::High));
+    assert_eq!(reasoning.summary, None);
+}
+
+#[test]
+fn unsupported_reasoning_effort_falls_back_to_model_default() {
+    let mut model = test_model_info();
+    model.supports_reasoning_summaries = false;
+    model.default_reasoning_level = Some(ReasoningEffort::Medium);
+    model.supported_reasoning_levels = vec![ReasoningEffortPreset {
+        effort: ReasoningEffort::Medium,
+        description: "medium".to_string(),
+    }];
+
+    let reasoning = ModelClient::build_reasoning(
+        &model,
+        Some(ReasoningEffort::XHigh),
+        codex_protocol::config_types::ReasoningSummary::None,
+    )
+    .expect("reasoning should fall back");
+
+    assert_eq!(reasoning.effort, Some(ReasoningEffort::Medium));
+    assert_eq!(reasoning.summary, None);
+}
+
+#[test]
+fn no_reasoning_metadata_omits_reasoning_without_summary_support() {
+    let mut model = test_model_info();
+    model.supports_reasoning_summaries = false;
+    model.default_reasoning_level = None;
+    model.supported_reasoning_levels = Vec::new();
+
+    let reasoning = ModelClient::build_reasoning(
+        &model,
+        Some(ReasoningEffort::High),
+        codex_protocol::config_types::ReasoningSummary::None,
+    );
+
+    assert_eq!(reasoning, None);
+}
 #[derive(Default)]
 struct TagCollectorVisitor {
     tags: BTreeMap<String, String>,

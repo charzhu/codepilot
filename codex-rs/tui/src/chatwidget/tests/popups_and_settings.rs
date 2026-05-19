@@ -2443,8 +2443,6 @@ async fn realtime_audio_picker_emits_persist_event() {
         vec!["Desk Speakers".to_string(), "Headphones".to_string()],
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert_matches!(
@@ -2575,7 +2573,7 @@ async fn model_picker_single_effort_selection_closes_all_model_popups() {
 }
 
 #[tokio::test]
-async fn model_picker_multi_effort_selection_closes_all_model_popups() {
+async fn model_picker_multi_effort_selection_opens_reasoning_popup() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("codex-auto-fast")).await;
     chat.thread_id = Some(ThreadId::new());
 
@@ -2604,6 +2602,19 @@ async fn model_picker_multi_effort_selection_closes_all_model_popups() {
     }
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let reasoning_event = rx.try_recv().expect("open reasoning popup event");
+    match reasoning_event {
+        AppEvent::OpenReasoningPopup { preset } => chat.open_reasoning_popup(preset),
+        event => panic!("expected OpenReasoningPopup, got {event:?}"),
+    }
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(
+        popup.contains("Select Reasoning Level for multi-effort-model"),
+        "expected reasoning popup, got: {popup}"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert!(!chat.bottom_pane.has_active_view());
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
@@ -2621,10 +2632,46 @@ async fn model_picker_multi_effort_selection_closes_all_model_popups() {
                 effort: Some(ReasoningEffortConfig::High),
             } if model == "multi-effort-model"
         )),
-        "expected persisted model selection event; events: {events:?}"
+        "expected persisted high reasoning selection event; events: {events:?}"
     );
 }
 
+#[tokio::test]
+async fn model_picker_no_effort_selection_clears_reasoning() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("codex-auto-fast")).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.open_model_popup_with_presets(vec![
+        model_picker_test_preset(
+            "codex-auto-fast",
+            ReasoningEffortConfig::Medium,
+            vec![ReasoningEffortConfig::Medium],
+        ),
+        model_picker_test_preset("no-effort-model", ReasoningEffortConfig::Medium, Vec::new()),
+    ]);
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let all_models_event = rx.try_recv().expect("open all models event");
+    match all_models_event {
+        AppEvent::OpenAllModelsPopup { models } => chat.open_all_models_popup(models),
+        event => panic!("expected OpenAllModelsPopup, got {event:?}"),
+    }
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(!chat.bottom_pane.has_active_view());
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AppEvent::PersistModelSelection {
+                model,
+                effort: None,
+            } if model == "no-effort-model"
+        )),
+        "expected persisted no-reasoning selection event; events: {events:?}"
+    );
+}
 #[tokio::test]
 async fn github_copilot_model_picker_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("claude-sonnet-4.5")).await;

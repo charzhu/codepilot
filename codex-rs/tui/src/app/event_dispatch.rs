@@ -809,6 +809,9 @@ impl App {
             AppEvent::OpenAllModelsPopup { models } => {
                 self.chat_widget.open_all_models_popup(models);
             }
+            AppEvent::OpenReasoningPopup { preset } => {
+                self.chat_widget.open_reasoning_popup(preset);
+            }
             AppEvent::OpenFullAccessConfirmation {
                 preset,
                 return_to_permissions,

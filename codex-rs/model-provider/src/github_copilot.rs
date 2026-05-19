@@ -22,10 +22,13 @@ use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::openai_models::WebSearchToolType;
 use serde::Deserialize;
 use serde_json::Value;
+use std::str::FromStr;
 
 use crate::auth::resolve_provider_auth;
 use crate::provider::ModelProvider;
@@ -316,8 +319,8 @@ impl CopilotModel {
             .as_deref()
             .map(|vendor| format!("{display_name} via GitHub Copilot ({vendor})"))
             .or_else(|| Some(format!("{display_name} via GitHub Copilot")));
-        info.default_reasoning_level = None;
-        info.supported_reasoning_levels = Vec::new();
+        info.supported_reasoning_levels = reasoning_efforts(self.capabilities.as_ref());
+        info.default_reasoning_level = default_reasoning_effort(&info.supported_reasoning_levels);
         info.shell_type = ConfigShellToolType::ShellCommand;
         info.visibility = ModelVisibility::List;
         info.supported_in_api = true;
@@ -560,6 +563,49 @@ fn modality_contains(capabilities: Option<&Value>, modality: &str) -> bool {
     .any(|value| value_contains_any(value, &[modality]))
 }
 
+fn reasoning_efforts(capabilities: Option<&Value>) -> Vec<ReasoningEffortPreset> {
+    let Some(value) = capabilities
+        .and_then(|capabilities| value_at_path(capabilities, &["supports", "reasoning_effort"]))
+    else {
+        return Vec::new();
+    };
+
+    let Some(items) = value.as_array() else {
+        return Vec::new();
+    };
+
+    let mut efforts = Vec::new();
+    for item in items {
+        let Some(value) = item.as_str() else {
+            continue;
+        };
+        let Ok(effort) = ReasoningEffort::from_str(value) else {
+            continue;
+        };
+        if efforts
+            .iter()
+            .any(|preset: &ReasoningEffortPreset| preset.effort == effort)
+        {
+            continue;
+        }
+        efforts.push(ReasoningEffortPreset {
+            effort,
+            description: effort.to_string(),
+        });
+    }
+    efforts
+}
+
+fn default_reasoning_effort(supported: &[ReasoningEffortPreset]) -> Option<ReasoningEffort> {
+    if supported.is_empty() {
+        return None;
+    }
+    supported
+        .iter()
+        .find(|preset| preset.effort == ReasoningEffort::Medium)
+        .or_else(|| supported.first())
+        .map(|preset| preset.effort)
+}
 fn first_i64_at_any(value: &Value, paths: &[&[&str]]) -> Option<i64> {
     paths
         .iter()
@@ -620,6 +666,96 @@ mod tests {
         path
     }
 
+    #[test]
+    fn maps_copilot_reasoning_efforts_from_capabilities() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "gpt-5.4",
+            "name": "GPT-5.4",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"reasoning_effort": ["low", "medium", "high", "xhigh"]}
+            }
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(info.default_reasoning_level, Some(ReasoningEffort::Medium));
+        assert_eq!(
+            info.supported_reasoning_levels,
+            vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Low,
+                    description: "low".to_string()
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Medium,
+                    description: "medium".to_string()
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::High,
+                    description: "high".to_string()
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::XHigh,
+                    description: "xhigh".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn maps_single_copilot_reasoning_effort_as_default() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "claude-opus-4.7-high",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"reasoning_effort": ["high"]}
+            }
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(info.default_reasoning_level, Some(ReasoningEffort::High));
+        assert_eq!(info.supported_reasoning_levels.len(), 1);
+    }
+
+    #[test]
+    fn ignores_unknown_copilot_reasoning_efforts() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "gpt-5.4-mini",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"reasoning_effort": ["medium", "turbo"]}
+            }
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(info.default_reasoning_level, Some(ReasoningEffort::Medium));
+        assert_eq!(
+            info.supported_reasoning_levels,
+            vec![ReasoningEffortPreset {
+                effort: ReasoningEffort::Medium,
+                description: "medium".to_string()
+            }]
+        );
+    }
     #[test]
     fn maps_selectable_copilot_chat_model() {
         let model: CopilotModel = serde_json::from_value(json!({
