@@ -2003,6 +2003,45 @@ impl App {
             AppEvent::SyntaxThemePreviewed => {
                 self.refresh_status_line();
             }
+            AppEvent::SkinSelected { id } => {
+                let id = crate::skin::normalize_skin_id(&id);
+                if !crate::skin::is_valid_skin_id(&id) {
+                    self.restore_runtime_skin_from_config();
+                    self.repaint_transcript_after_appearance_change(tui);
+                    self.chat_widget.add_error_message(format!(
+                        "Skin \"{id}\" not found. Use /skin to choose a built-in skin."
+                    ));
+                    return Ok(AppRunControl::Continue);
+                }
+
+                let configured = crate::skin::configured_skin_value(&id);
+                let edit = if let Some(configured_id) = configured.as_deref() {
+                    crate::legacy_core::config::edit::tui_skin_edit(configured_id)
+                } else {
+                    crate::legacy_core::config::edit::clear_tui_skin_edit()
+                };
+                let apply_result = ConfigEditsBuilder::for_config(&self.config)
+                    .with_edits([edit])
+                    .apply()
+                    .await;
+                match apply_result {
+                    Ok(()) => {
+                        crate::skin::set_runtime_skin_by_id(&id);
+                        self.sync_tui_skin_selection(configured);
+                        self.repaint_transcript_after_appearance_change(tui);
+                    }
+                    Err(err) => {
+                        self.restore_runtime_skin_from_config();
+                        self.repaint_transcript_after_appearance_change(tui);
+                        tracing::error!(error = %err, "failed to persist skin selection");
+                        self.chat_widget
+                            .add_error_message(format!("Failed to save skin: {err}"));
+                    }
+                }
+            }
+            AppEvent::SkinPreviewed => {
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::OpenKeymapActionMenu { context, action } => {
                 self.chat_widget
                     .open_keymap_action_menu(context, action, &self.keymap);

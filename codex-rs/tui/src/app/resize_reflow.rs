@@ -446,6 +446,16 @@ impl App {
         Ok(terminal_width)
     }
 
+    pub(super) fn repaint_transcript_after_appearance_change(&mut self, tui: &mut tui::Tui) {
+        if let Err(err) = self.reflow_transcript_now(tui) {
+            tracing::warn!(error = %err, "failed to repaint transcript after appearance change");
+            self.chat_widget.add_error_message(format!(
+                "Failed to repaint transcript after appearance change: {err}"
+            ));
+        }
+        tui.frame_requester().schedule_frame();
+    }
+
     /// Render transcript cells for the current resize rebuild.
     ///
     /// Rendering walks backward from the transcript tail so row-capped sessions avoid formatting the

@@ -97,6 +97,48 @@ session_picker_view = "dense"
 }
 
 #[test]
+fn tui_skin_edit_writes_root_tui_setting() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([tui_skin_edit("obsidian-bloom")])
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"[tui]
+skin = "obsidian-bloom"
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
+fn clear_tui_skin_edit_removes_root_tui_setting() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"[tui]
+skin = "obsidian-bloom"
+theme = "dracula"
+"#,
+    )
+    .expect("write config");
+
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([clear_tui_skin_edit()])
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"[tui]
+theme = "dracula"
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
 fn session_picker_view_builder_respects_active_profile() {
     let tmp = tempdir().expect("tmpdir");
     let codex_home = tmp.path();

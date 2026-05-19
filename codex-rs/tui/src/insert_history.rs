@@ -31,6 +31,7 @@ use ratatui::layout::Size;
 use ratatui::prelude::Backend;
 use ratatui::style::Color;
 use ratatui::style::Modifier;
+use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
 
@@ -79,6 +80,7 @@ where
     // - Non-URL lines also flow through adaptive wrapping; behavior is
     //   equivalent to standard wrapping when no URL is present.
     let wrap_width = area.width.max(1) as usize;
+    let fallback_style = crate::skin::base_style();
     let mut wrapped = Vec::new();
     let mut wrapped_rows = 0usize;
 
@@ -147,7 +149,7 @@ where
 
     for line in &wrapped {
         queue!(writer, Print("\r\n"))?;
-        write_history_line(writer, line, wrap_width)?;
+        write_history_line(writer, line, wrap_width, fallback_style)?;
     }
 
     queue!(writer, ResetScrollRegion)?;
@@ -190,8 +192,15 @@ fn leading_whitespace_prefix(line: &Line<'_>) -> Line<'static> {
 /// Render a single wrapped history line: clear continuation rows for wide lines,
 /// set foreground/background colors, and write styled spans. Caller is responsible
 /// for cursor positioning and any leading `\r\n`.
-fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) -> io::Result<()> {
+fn write_history_line<W: Write>(
+    writer: &mut W,
+    line: &Line,
+    wrap_width: usize,
+    fallback_style: Option<Style>,
+) -> io::Result<()> {
     let physical_rows = line.width().max(1).div_ceil(wrap_width) as u16;
+    let clear_style = style_with_history_fallback(line.style, fallback_style);
+    queue_history_colors(writer, clear_style)?;
     if physical_rows > 1 {
         queue!(writer, SavePosition)?;
         for _ in 1..physical_rows {
@@ -200,19 +209,6 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
         }
         queue!(writer, RestorePosition)?;
     }
-    queue!(
-        writer,
-        SetColors(Colors::new(
-            line.style
-                .fg
-                .map(std::convert::Into::into)
-                .unwrap_or(CColor::Reset),
-            line.style
-                .bg
-                .map(std::convert::Into::into)
-                .unwrap_or(CColor::Reset)
-        ))
-    )?;
     queue!(writer, Clear(ClearType::UntilNewLine))?;
     // Merge line-level style into each span so that ANSI colors reflect
     // line styles (e.g., blockquotes with green fg).
@@ -220,11 +216,39 @@ fn write_history_line<W: Write>(writer: &mut W, line: &Line, wrap_width: usize) 
         .spans
         .iter()
         .map(|s| Span {
-            style: s.style.patch(line.style),
+            style: style_with_history_fallback(s.style.patch(line.style), fallback_style),
             content: s.content.clone(),
         })
         .collect();
     write_spans(writer, merged_spans.iter())
+}
+
+fn style_with_history_fallback(mut style: Style, fallback_style: Option<Style>) -> Style {
+    if let Some(fallback_style) = fallback_style {
+        if style.fg.is_none() {
+            style.fg = fallback_style.fg;
+        }
+        if style.bg.is_none() {
+            style.bg = fallback_style.bg;
+        }
+    }
+    style
+}
+
+fn queue_history_colors<W: Write>(writer: &mut W, style: Style) -> io::Result<()> {
+    queue!(
+        writer,
+        SetColors(Colors::new(
+            style
+                .fg
+                .map(std::convert::Into::into)
+                .unwrap_or(CColor::Reset),
+            style
+                .bg
+                .map(std::convert::Into::into)
+                .unwrap_or(CColor::Reset)
+        ))
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -380,6 +404,7 @@ mod tests {
     use super::*;
     use crate::markdown_render::render_markdown_text;
     use crate::test_backend::VT100Backend;
+    use pretty_assertions::assert_eq;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
 
@@ -408,6 +433,33 @@ mod tests {
         assert_eq!(
             String::from_utf8(actual).unwrap(),
             String::from_utf8(expected).unwrap()
+        );
+    }
+
+    #[test]
+    fn history_fallback_style_fills_missing_colors_without_overriding_content() {
+        let fallback = Style::default()
+            .fg(Color::Rgb(1, 2, 3))
+            .bg(Color::Rgb(4, 5, 6));
+        let line_style = Style::default().bg(Color::Rgb(7, 8, 9));
+
+        let plain = style_with_history_fallback(Style::default().patch(line_style), Some(fallback));
+        assert_eq!(
+            (plain.fg, plain.bg),
+            (Some(Color::Rgb(1, 2, 3)), Some(Color::Rgb(7, 8, 9)))
+        );
+
+        let explicit_fg = style_with_history_fallback(
+            Style::default().fg(Color::Red).patch(line_style),
+            Some(fallback),
+        );
+        assert_eq!(
+            (explicit_fg.fg, explicit_fg.bg),
+            (Some(Color::Red), Some(Color::Rgb(7, 8, 9)))
+        );
+        assert_eq!(
+            style_with_history_fallback(Style::default(), /*fallback_style*/ None),
+            Style::default()
         );
     }
 

@@ -90,6 +90,21 @@ pub fn syntax_theme_edit(name: &str) -> ConfigEdit {
     }
 }
 
+/// Produces a config edit that sets `[tui].skin = "<id>"`.
+pub fn tui_skin_edit(id: &str) -> ConfigEdit {
+    ConfigEdit::SetPath {
+        segments: vec!["tui".to_string(), "skin".to_string()],
+        value: value(id.to_string()),
+    }
+}
+
+/// Produces a config edit that clears `[tui].skin`.
+pub fn clear_tui_skin_edit() -> ConfigEdit {
+    ConfigEdit::ClearPath {
+        segments: vec!["tui".to_string(), "skin".to_string()],
+    }
+}
+
 /// Produces a config edit that sets [tui].pet = "<name>".
 pub fn tui_pet_edit(name: &str) -> ConfigEdit {
     ConfigEdit::SetPath {

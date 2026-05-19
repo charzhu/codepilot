@@ -1,0 +1,28 @@
+---
+source: tui/src/chatwidget/tests/slash_commands.rs
+expression: popup
+---
+  Select TUI Skin
+  Recolor backgrounds, surfaces, and accents.
+
+  Type to filter skins...
+› Default (current)  Use Codex's built-in TUI
+                     appearance
+  Obsidian Bloom     Near-black glass with
+                     orchid, mint, and rose
+                     accents                         Skin: Default
+  Porcelain Ink      Porcelain white, graphite       No additional skin applied.
+                     text, cobalt, ruby, and jade
+  Deep Ocean         Abyss navy with aqua,           Uses terminal colors and Codex defaults.
+                     seafoam, coral, and pearl       Choose a skin for full TUI recoloring.
+  Paper Lantern      Warm paper, ink, vermilion,
+                     brass, and moss
+  Neon Circuit       Black-blue shell with cyan,
+                     hot pink, acid green, and
+                     amber
+  Evergreen Desk     Forest green, ivory, sage,
+                     brass, and sky blue
+  Graphite Rose      Graphite, dusty rose, steel
+                     blue, mint, and pearl
+
+  Press enter to confirm or esc to go back

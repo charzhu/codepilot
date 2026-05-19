@@ -1,6 +1,6 @@
 //! Settings-adjacent popup surfaces for `ChatWidget`.
 //!
-//! This keeps theme, personality, audio-device, and experimental-feature UI
+//! This keeps theme, skin, personality, audio-device, and experimental-feature UI
 //! out of the main orchestration module without changing their event wiring.
 
 use super::*;
@@ -18,6 +18,15 @@ impl ChatWidget {
             terminal_width,
         );
         self.bottom_pane.show_selection_view(params);
+    }
+
+    pub(super) fn open_skin_picker(&mut self) {
+        let params = crate::skin_picker::build_skin_picker_params(self.config.tui_skin.as_deref());
+        self.bottom_pane.show_selection_view(params);
+    }
+
+    pub(super) fn select_skin_by_id(&mut self, id: String) {
+        self.app_event_tx.send(AppEvent::SkinSelected { id });
     }
 
     pub(crate) fn open_personality_popup(&mut self) {

@@ -225,6 +225,11 @@ impl ChatWidget {
         self.config.tui_theme = theme;
     }
 
+    /// Set the TUI skin override in the widget's config copy.
+    pub(crate) fn set_tui_skin(&mut self, skin: Option<String>) {
+        self.config.tui_skin = skin;
+    }
+
     /// Set the model in the widget's config copy and stored collaboration mode.
     pub(crate) fn set_model(&mut self, model: &str) {
         self.current_collaboration_mode = self.current_collaboration_mode.with_updates(

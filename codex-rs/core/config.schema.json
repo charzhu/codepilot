@@ -2830,6 +2830,11 @@
           "description": "Show startup tooltips in the TUI welcome screen. Defaults to `true`.",
           "type": "boolean"
         },
+        "skin": {
+          "default": null,
+          "description": "TUI appearance skin id (kebab-case).\n\nWhen set, applies a built-in skin for chat background, surfaces, and accents. Use `/skin` in the TUI to choose a skin. Omit or clear this to use the default terminal appearance.",
+          "type": "string"
+        },
         "status_line": {
           "default": null,
           "description": "Ordered list of status line item identifiers.\n\nWhen set, the TUI renders the selected items as the status line. When unset, the TUI defaults to: `model-with-reasoning` and `current-dir`.",

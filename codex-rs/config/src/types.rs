@@ -733,6 +733,14 @@ pub struct Tui {
     #[serde(default)]
     pub theme: Option<String>,
 
+    /// TUI appearance skin id (kebab-case).
+    ///
+    /// When set, applies a built-in skin for chat background, surfaces, and accents.
+    /// Use `/skin` in the TUI to choose a skin. Omit or clear this to use the default
+    /// terminal appearance.
+    #[serde(default)]
+    pub skin: Option<String>,
+
     /// Pet id to preselect in the terminal pet picker.
     ///
     /// Custom pet ids resolve against CODEX_HOME/pets/<pet-id>/pet.json.

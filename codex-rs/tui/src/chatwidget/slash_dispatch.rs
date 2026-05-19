@@ -415,6 +415,9 @@ impl ChatWidget {
             SlashCommand::Theme => {
                 self.open_theme_picker();
             }
+            SlashCommand::Skin => {
+                self.open_skin_picker();
+            }
             SlashCommand::Pets => {
                 self.open_pets_picker();
             }
@@ -811,6 +814,9 @@ impl ChatWidget {
             {
                 self.app_event_tx.send(AppEvent::PetDisabled);
             }
+            SlashCommand::Skin if !trimmed.is_empty() => {
+                self.select_skin_by_id(args);
+            }
             SlashCommand::Pets if !trimmed.is_empty() => {
                 self.select_pet_by_id(args);
             }
@@ -1004,6 +1010,7 @@ impl ChatWidget {
             | SlashCommand::Title
             | SlashCommand::Statusline
             | SlashCommand::Theme
+            | SlashCommand::Skin
             | SlashCommand::Pets => QueueDrain::Stop,
         }
     }

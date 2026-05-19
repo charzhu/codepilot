@@ -9,15 +9,24 @@ use ratatui::style::Stylize;
 const LIGHT_BG_ACCENT_RGB: (u8, u8, u8) = (0, 95, 135);
 
 pub fn user_message_style() -> Style {
+    if let Some(style) = crate::skin::user_message_style() {
+        return style;
+    }
     user_message_style_for(default_bg())
 }
 
 pub fn proposed_plan_style() -> Style {
+    if let Some(style) = crate::skin::surface_style() {
+        return style;
+    }
     proposed_plan_style_for(default_bg())
 }
 
 /// Returns the shared accent style for active or selected TUI controls.
 pub(crate) fn accent_style() -> Style {
+    if let Some(style) = crate::skin::accent_style() {
+        return style;
+    }
     accent_style_for(default_bg())
 }
 

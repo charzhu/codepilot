@@ -86,7 +86,7 @@ impl Renderable for TranscriptAreaRenderable<'_> {
                 .saturating_sub(usize::from(area.height));
             u16::try_from(overflow).unwrap_or(u16::MAX)
         };
-        Clear.render(area, buf);
+        crate::skin::clear_area(area, buf);
         paragraph.scroll((y, 0)).render(area, buf);
     }
 
@@ -111,6 +111,7 @@ impl TranscriptAreaRenderable<'_> {
 
 impl Renderable for ChatWidget {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        crate::skin::paint_background(area, buf);
         self.as_renderable().render(area, buf);
         self.last_rendered_width.set(Some(area.width as usize));
     }

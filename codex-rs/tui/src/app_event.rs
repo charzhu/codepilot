@@ -950,6 +950,14 @@ pub(crate) enum AppEvent {
     /// Runtime syntax theme preview changed; refresh theme-derived UI colors.
     SyntaxThemePreviewed,
 
+    /// Apply a user-confirmed TUI skin selection.
+    SkinSelected {
+        id: String,
+    },
+
+    /// Runtime TUI skin preview changed; redraw skin-derived UI colors.
+    SkinPreviewed,
+
     /// Open set/remove actions for the selected keymap action.
     OpenKeymapActionMenu {
         context: String,

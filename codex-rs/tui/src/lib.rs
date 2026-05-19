@@ -168,6 +168,8 @@ mod session_resume;
 mod session_state;
 mod shimmer;
 mod skills_helpers;
+mod skin;
+mod skin_picker;
 mod slash_command;
 mod startup_error;
 mod startup_hooks_review;
@@ -1577,6 +1579,10 @@ async fn run_ratatui_app(
         config.tui_theme.clone(),
         find_codex_home().ok().map(AbsolutePathBuf::into_path_buf),
     ) {
+        config.startup_warnings.push(w);
+    }
+
+    if let Some(w) = crate::skin::set_skin_override(config.tui_skin.clone()) {
         config.startup_warnings.push(w);
     }
 

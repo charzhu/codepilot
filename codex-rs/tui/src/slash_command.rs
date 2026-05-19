@@ -47,6 +47,7 @@ pub enum SlashCommand {
     Title,
     Statusline,
     Theme,
+    Skin,
     #[strum(to_string = "pets", serialize = "pet")]
     Pets,
     Mcp,
@@ -100,6 +101,7 @@ impl SlashCommand {
             SlashCommand::Title => "configure which items appear in the terminal title",
             SlashCommand::Statusline => "configure which items appear in the status line",
             SlashCommand::Theme => "choose a syntax highlighting theme",
+            SlashCommand::Skin => "choose a TUI color skin",
             SlashCommand::Pets => "choose or hide the terminal pet",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::Stop => "stop all background terminals",
@@ -154,6 +156,7 @@ impl SlashCommand {
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
                 | SlashCommand::Raw
+                | SlashCommand::Skin
                 | SlashCommand::Pets
                 | SlashCommand::Side
                 | SlashCommand::Resume
@@ -227,7 +230,7 @@ impl SlashCommand {
             SlashCommand::Realtime => true,
             SlashCommand::Settings => true,
             SlashCommand::Agent | SlashCommand::MultiAgents => true,
-            SlashCommand::Theme | SlashCommand::Pets => false,
+            SlashCommand::Theme | SlashCommand::Skin | SlashCommand::Pets => false,
         }
     }
 
@@ -270,6 +273,13 @@ mod tests {
     fn pet_alias_parses_to_pets_command() {
         assert_eq!(SlashCommand::Pets.command(), "pets");
         assert_eq!(SlashCommand::from_str("pet"), Ok(SlashCommand::Pets));
+    }
+
+    #[test]
+    fn skin_command_parses_and_supports_args() {
+        assert_eq!(SlashCommand::from_str("skin"), Ok(SlashCommand::Skin));
+        assert!(SlashCommand::Skin.supports_inline_args());
+        assert!(!SlashCommand::Skin.available_during_task());
     }
 
     #[test]

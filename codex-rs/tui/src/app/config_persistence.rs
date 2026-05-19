@@ -545,6 +545,11 @@ impl App {
         self.chat_widget.set_tui_theme(Some(name));
     }
 
+    pub(super) fn sync_tui_skin_selection(&mut self, skin: Option<String>) {
+        self.config.tui_skin = skin.clone();
+        self.chat_widget.set_tui_skin(skin);
+    }
+
     #[cfg(test)]
     pub(super) fn sync_tui_pet_selection(&mut self, pet: String) {
         self.config.tui_pet = Some(pet.clone());
@@ -573,6 +578,10 @@ impl App {
         ) {
             crate::render::highlight::set_syntax_theme(theme);
         }
+    }
+
+    pub(super) fn restore_runtime_skin_from_config(&self) {
+        crate::skin::set_runtime_skin_by_config_value(self.config.tui_skin.as_deref());
     }
 
     pub(super) fn personality_label(personality: Personality) -> &'static str {
@@ -773,6 +782,19 @@ terminal_resize_reflow_max_rows = 9000
         assert_eq!(
             app.chat_widget.config_ref().tui_theme.as_deref(),
             Some("dracula")
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_tui_skin_selection_updates_chat_widget_config_copy() {
+        let mut app = make_test_app().await;
+
+        app.sync_tui_skin_selection(Some("obsidian-bloom".to_string()));
+
+        assert_eq!(app.config.tui_skin.as_deref(), Some("obsidian-bloom"));
+        assert_eq!(
+            app.chat_widget.config_ref().tui_skin.as_deref(),
+            Some("obsidian-bloom")
         );
     }
 
