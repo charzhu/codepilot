@@ -563,10 +563,17 @@ impl Session {
             let mcp_servers = mcp_manager_for_mcp
                 .effective_servers(&config_for_mcp, auth.as_ref())
                 .await;
+            let github_copilot_runtime_auth_available =
+                github_copilot_runtime_auth_available_for_servers(
+                    mcp_servers.iter(),
+                    &config_for_mcp.codex_home,
+                )
+                .await;
             let auth_statuses = compute_auth_statuses(
                 mcp_servers.iter(),
                 config_for_mcp.mcp_oauth_credentials_store_mode,
                 auth.as_ref(),
+                github_copilot_runtime_auth_available,
             )
             .await;
             (auth, mcp_servers, auth_statuses)

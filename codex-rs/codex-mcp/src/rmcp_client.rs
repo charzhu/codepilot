@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::ffi::OsString;
 use std::sync::Arc;
@@ -59,6 +60,7 @@ use rmcp::model::ClientCapabilities;
 use rmcp::model::ElicitationCapability;
 use rmcp::model::Implementation;
 use rmcp::model::InitializeRequestParams;
+use rmcp::model::PaginatedRequestParams;
 use rmcp::model::ProtocolVersion;
 use rmcp::model::Tool as RmcpTool;
 use tokio_util::sync::CancellationToken;
@@ -334,11 +336,31 @@ pub(crate) async fn list_tools_for_client_uncached(
     timeout: Option<Duration>,
     server_instructions: Option<&str>,
 ) -> Result<Vec<ToolInfo>> {
-    let resp = client
-        .list_tools_with_connector_ids(/*params*/ None, timeout)
-        .await?;
-    let tools = resp
-        .tools
+    let mut all_tools = Vec::new();
+    let mut cursor = None;
+    let mut seen_cursors = HashSet::new();
+
+    loop {
+        let params = cursor.take().map(|cursor| PaginatedRequestParams {
+            meta: None,
+            cursor: Some(cursor),
+        });
+        let resp = client
+            .list_tools_with_connector_ids(params, timeout)
+            .await?;
+        all_tools.extend(resp.tools);
+        let Some(next_cursor) = resp.next_cursor else {
+            break;
+        };
+        if !seen_cursors.insert(next_cursor.clone()) {
+            return Err(anyhow!(
+                "MCP server `{server_name}` returned duplicate tools/list cursor"
+            ));
+        }
+        cursor = Some(next_cursor);
+    }
+
+    let tools = all_tools
         .into_iter()
         .map(|tool| {
             let mut tool_def = tool.tool;

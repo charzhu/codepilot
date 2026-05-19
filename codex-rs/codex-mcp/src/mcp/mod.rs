@@ -5,6 +5,7 @@ pub use auth::McpOAuthScopesSource;
 pub use auth::ResolvedMcpOAuthScopes;
 pub use auth::compute_auth_statuses;
 pub use auth::discover_supported_scopes;
+pub use auth::github_copilot_runtime_auth_available_for_servers;
 pub use auth::oauth_login_support;
 pub use auth::resolve_oauth_scopes;
 pub use auth::should_retry_without_scopes;
@@ -281,10 +282,14 @@ pub async fn read_mcp_resource(
     let mut mcp_servers = effective_mcp_servers(config, auth);
     let host_owned_codex_apps_enabled = host_owned_codex_apps_enabled(config, auth);
     mcp_servers.retain(|name, _| name == server);
+    let github_copilot_runtime_auth_available =
+        github_copilot_runtime_auth_available_for_servers(mcp_servers.iter(), &config.codex_home)
+            .await;
     let auth_statuses = compute_auth_statuses(
         mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         auth,
+        github_copilot_runtime_auth_available,
     )
     .await;
     let (tx_event, rx_event) = unbounded();
@@ -348,10 +353,14 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         };
     }
 
+    let github_copilot_runtime_auth_available =
+        github_copilot_runtime_auth_available_for_servers(mcp_servers.iter(), &config.codex_home)
+            .await;
     let auth_status_entries = compute_auth_statuses(
         mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         auth,
+        github_copilot_runtime_auth_available,
     )
     .await;
 

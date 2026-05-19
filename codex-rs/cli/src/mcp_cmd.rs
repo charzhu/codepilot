@@ -19,6 +19,7 @@ use codex_mcp::McpOAuthLoginSupport;
 use codex_mcp::ResolvedMcpOAuthScopes;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::discover_supported_scopes;
+use codex_mcp::github_copilot_runtime_auth_available_for_servers;
 use codex_mcp::oauth_login_support;
 use codex_mcp::resolve_oauth_scopes;
 use codex_mcp::should_retry_without_scopes;
@@ -539,10 +540,16 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    let github_copilot_runtime_auth_available = github_copilot_runtime_auth_available_for_servers(
+        effective_mcp_servers.iter(),
+        &config.codex_home,
+    )
+    .await;
     let auth_statuses = compute_auth_statuses(
         effective_mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         /*auth*/ None,
+        github_copilot_runtime_auth_available,
     )
     .await;
 

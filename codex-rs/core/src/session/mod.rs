@@ -311,6 +311,7 @@ use codex_core_plugins::PluginsManager;
 use codex_git_utils::get_git_repo_root;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::effective_mcp_servers_from_configured;
+use codex_mcp::github_copilot_runtime_auth_available_for_servers;
 use codex_mcp::host_owned_codex_apps_enabled;
 use codex_otel::SessionTelemetry;
 use codex_otel::THREAD_STARTED_METRIC;

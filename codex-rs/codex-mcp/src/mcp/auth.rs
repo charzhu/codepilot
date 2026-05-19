@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::Result;
 use codex_config::McpServerConfig;
@@ -131,6 +132,7 @@ pub async fn compute_auth_statuses<'a, I>(
     servers: I,
     store_mode: OAuthCredentialsStoreMode,
     auth: Option<&CodexAuth>,
+    github_copilot_runtime_auth_available: bool,
 ) -> HashMap<String, McpAuthStatusEntry>
 where
     I: IntoIterator<Item = (&'a String, &'a EffectiveMcpServer)>,
@@ -138,7 +140,9 @@ where
     let futures = servers.into_iter().map(|(name, server)| {
         let name = name.clone();
         let config = server.configured_config().cloned();
-        let has_runtime_auth = server.uses_github_copilot_runtime_auth()
+        let uses_github_copilot_runtime_auth = server.uses_github_copilot_runtime_auth();
+        let has_runtime_auth = (uses_github_copilot_runtime_auth
+            && github_copilot_runtime_auth_available)
             || (name == CODEX_APPS_MCP_SERVER_NAME
                 && auth.is_some_and(CodexAuth::uses_codex_backend)
                 && config.as_ref().is_some_and(|config| {
@@ -150,10 +154,20 @@ where
                         }
                     )
                 }));
+        let missing_runtime_auth =
+            uses_github_copilot_runtime_auth && !github_copilot_runtime_auth_available;
         async move {
             let auth_status = match config.as_ref() {
                 Some(config) => {
-                    match compute_auth_status(&name, config, store_mode, has_runtime_auth).await {
+                    match compute_auth_status(
+                        &name,
+                        config,
+                        store_mode,
+                        has_runtime_auth,
+                        missing_runtime_auth,
+                    )
+                    .await
+                    {
                         Ok(status) => status,
                         Err(error) => {
                             warn!(
@@ -181,9 +195,14 @@ async fn compute_auth_status(
     config: &McpServerConfig,
     store_mode: OAuthCredentialsStoreMode,
     has_runtime_auth: bool,
+    missing_runtime_auth: bool,
 ) -> Result<McpAuthStatus> {
     if !config.enabled {
         return Ok(McpAuthStatus::Unsupported);
+    }
+
+    if missing_runtime_auth {
+        return Ok(McpAuthStatus::NotLoggedIn);
     }
 
     if has_runtime_auth {
@@ -209,6 +228,23 @@ async fn compute_auth_status(
             .await
         }
     }
+}
+
+pub async fn github_copilot_runtime_auth_available_for_servers<'a, I>(
+    servers: I,
+    codex_home: &Path,
+) -> bool
+where
+    I: IntoIterator<Item = (&'a String, &'a EffectiveMcpServer)>,
+{
+    if servers
+        .into_iter()
+        .any(|(_, server)| server.enabled() && server.uses_github_copilot_runtime_auth())
+    {
+        return crate::github_copilot::github_copilot_mcp_runtime_auth_available(codex_home).await;
+    }
+
+    false
 }
 
 #[cfg(test)]

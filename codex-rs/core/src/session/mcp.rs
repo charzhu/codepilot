@@ -287,8 +287,19 @@ impl Session {
             effective_mcp_servers_from_configured(mcp_servers, &mcp_config, auth.as_ref());
         let host_owned_codex_apps_enabled =
             host_owned_codex_apps_enabled(&mcp_config, auth.as_ref());
-        let auth_statuses =
-            compute_auth_statuses(mcp_servers.iter(), store_mode, auth.as_ref()).await;
+        let github_copilot_runtime_auth_available =
+            github_copilot_runtime_auth_available_for_servers(
+                mcp_servers.iter(),
+                &config.codex_home,
+            )
+            .await;
+        let auth_statuses = compute_auth_statuses(
+            mcp_servers.iter(),
+            store_mode,
+            auth.as_ref(),
+            github_copilot_runtime_auth_available,
+        )
+        .await;
         let mcp_runtime_environment = match turn_context.environments.primary() {
             Some(turn_environment) => McpRuntimeEnvironment::new(
                 Arc::clone(&turn_environment.environment),

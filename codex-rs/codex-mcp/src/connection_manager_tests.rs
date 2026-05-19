@@ -921,7 +921,22 @@ fn mcp_init_error_display_prompts_for_github_copilot_login() {
 
     let display = mcp_init_error_display(server_name, Some(&entry), &err);
 
-    let expected = "GitHub Copilot MCP is not authenticated. Run `codex login github-copilot` or `/login github-copilot`, then restart Codepilot.".to_string();
+    let expected = "GitHub Copilot MCP is not authenticated. Run `codepilot login github-copilot` using the same CODEX_HOME as this session, or run `/login github-copilot`, then restart Codepilot.".to_string();
+    assert_eq!(expected, display);
+}
+
+#[test]
+fn mcp_init_error_display_reports_github_copilot_non_auth_errors() {
+    let server_name = crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME;
+    let entry = McpAuthStatusEntry {
+        config: Some(crate::github_copilot::github_copilot_mcp_server_config()),
+        auth_status: McpAuthStatus::BearerToken,
+    };
+    let err: StartupOutcomeError = anyhow::anyhow!("tools/list returned no usable tools").into();
+
+    let display = mcp_init_error_display(server_name, Some(&entry), &err);
+
+    let expected = "MCP client for `github-mcp-server` failed to start: MCP startup failed: tools/list returned no usable tools".to_string();
     assert_eq!(expected, display);
 }
 

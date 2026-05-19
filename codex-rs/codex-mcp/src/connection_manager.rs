@@ -743,15 +743,14 @@ fn mcp_init_error_display(
     if let Some(McpServerTransportConfig::StreamableHttp {
         url,
         bearer_token_env_var,
-        http_headers,
         ..
     }) = entry.and_then(|entry| entry.config.as_ref().map(|config| &config.transport))
         && server_name == GITHUB_COPILOT_MCP_SERVER_NAME
         && url == GITHUB_COPILOT_MCP_SERVER_URL
         && bearer_token_env_var.is_none()
-        && http_headers.as_ref().map(HashMap::is_empty).unwrap_or(true)
+        && is_mcp_client_auth_required_error(err)
     {
-        "GitHub Copilot MCP is not authenticated. Run `codex login github-copilot` or `/login github-copilot`, then restart Codepilot.".to_string()
+        "GitHub Copilot MCP is not authenticated. Run `codepilot login github-copilot` using the same CODEX_HOME as this session, or run `/login github-copilot`, then restart Codepilot.".to_string()
     } else if let Some(McpServerTransportConfig::StreamableHttp {
         url,
         bearer_token_env_var,

@@ -420,6 +420,7 @@ async fn effective_mcp_servers_marks_builtin_github_copilot_for_runtime_auth() {
         servers.iter(),
         config.mcp_oauth_credentials_store_mode,
         /*auth*/ None,
+        /*github_copilot_runtime_auth_available*/ true,
     )
     .await;
     assert_eq!(
@@ -427,6 +428,33 @@ async fn effective_mcp_servers_marks_builtin_github_copilot_for_runtime_auth() {
             .get(crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME)
             .map(|entry| entry.auth_status),
         Some(McpAuthStatus::BearerToken)
+    );
+}
+
+#[tokio::test]
+async fn effective_mcp_servers_reports_builtin_github_copilot_not_logged_in_without_runtime_auth() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
+    config.github_copilot_mcp_server_enabled = true;
+    config.configured_mcp_servers.insert(
+        crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME.to_string(),
+        crate::github_copilot::github_copilot_mcp_server_config(),
+    );
+
+    let servers = effective_mcp_servers(&config, /*auth*/ None);
+    let auth_statuses = compute_auth_statuses(
+        servers.iter(),
+        config.mcp_oauth_credentials_store_mode,
+        /*auth*/ None,
+        /*github_copilot_runtime_auth_available*/ false,
+    )
+    .await;
+
+    assert_eq!(
+        auth_statuses
+            .get(crate::github_copilot::GITHUB_COPILOT_MCP_SERVER_NAME)
+            .map(|entry| entry.auth_status),
+        Some(McpAuthStatus::NotLoggedIn)
     );
 }
 
