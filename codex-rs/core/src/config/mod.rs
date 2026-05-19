@@ -108,6 +108,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::Entry;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
@@ -150,6 +151,7 @@ pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
 pub(crate) use permissions::resolve_permission_profile;
+pub use resolved_permission_profile::PermissionProfileSnapshot;
 pub(crate) use resolved_permission_profile::PermissionProfileState;
 
 const DEFAULT_IGNORE_LARGE_UNTRACKED_DIRS: i64 = 200;
@@ -312,30 +314,13 @@ impl Permissions {
     ///
     /// This is a trusted-state bridge for consumers of `SessionConfigured`.
     /// Config loading and app-server selection should resolve named profiles
-    /// through config instead of constructing this pair directly.
+    /// through config instead of constructing a snapshot directly.
     pub fn set_permission_profile_from_session_snapshot(
         &mut self,
-        permission_profile: PermissionProfile,
-        active_permission_profile: Option<ActivePermissionProfile>,
+        snapshot: PermissionProfileSnapshot,
     ) -> ConstraintResult<()> {
-        self.set_permission_profile_from_session_snapshot_with_profile_workspace_roots(
-            permission_profile,
-            active_permission_profile,
-            Vec::new(),
-        )
-    }
-
-    pub fn set_permission_profile_from_session_snapshot_with_profile_workspace_roots(
-        &mut self,
-        permission_profile: PermissionProfile,
-        active_permission_profile: Option<ActivePermissionProfile>,
-        profile_workspace_roots: Vec<AbsolutePathBuf>,
-    ) -> ConstraintResult<()> {
-        self.permission_profile_state.set_active_permission_profile(
-            permission_profile,
-            active_permission_profile,
-            profile_workspace_roots,
-        )
+        self.permission_profile_state
+            .set_permission_profile_snapshot(snapshot)
     }
 
     /// Replace the current permission constraints with a trusted session
@@ -343,26 +328,12 @@ impl Permissions {
     /// after their local config constraints reject the snapshot.
     pub fn replace_permission_profile_from_session_snapshot(
         &mut self,
-        permission_profile: Constrained<PermissionProfile>,
-        active_permission_profile: Option<ActivePermissionProfile>,
+        snapshot: PermissionProfileSnapshot,
     ) -> ConstraintResult<()> {
-        self.replace_permission_profile_from_session_snapshot_with_profile_workspace_roots(
+        let permission_profile = Constrained::allow_only(snapshot.permission_profile().clone());
+        self.permission_profile_state = PermissionProfileState::from_constrained_resolved(
             permission_profile,
-            active_permission_profile,
-            Vec::new(),
-        )
-    }
-
-    pub fn replace_permission_profile_from_session_snapshot_with_profile_workspace_roots(
-        &mut self,
-        permission_profile: Constrained<PermissionProfile>,
-        active_permission_profile: Option<ActivePermissionProfile>,
-        profile_workspace_roots: Vec<AbsolutePathBuf>,
-    ) -> ConstraintResult<()> {
-        self.permission_profile_state = PermissionProfileState::from_constrained_active_profile(
-            permission_profile,
-            active_permission_profile,
-            profile_workspace_roots,
+            snapshot.into_resolved_permission_profile(),
         )?;
         Ok(())
     }
@@ -877,6 +848,9 @@ pub struct Config {
     /// Optional path override for the host-owned apps MCP server.
     pub apps_mcp_path_override: Option<String>,
 
+    /// Optional product SKU forwarded to the host-owned apps MCP server.
+    pub apps_mcp_product_sku: Option<String>,
+
     /// Machine-local realtime audio device preferences used by realtime voice.
     pub realtime_audio: RealtimeAudioConfig,
 
@@ -986,6 +960,7 @@ pub struct MultiAgentV2Config {
     pub usage_hint_text: Option<String>,
     pub root_agent_usage_hint_text: Option<String>,
     pub subagent_usage_hint_text: Option<String>,
+    pub tool_namespace: Option<String>,
     pub hide_spawn_agent_metadata: bool,
     pub non_code_mode_only: bool,
 }
@@ -1002,6 +977,7 @@ impl Default for MultiAgentV2Config {
             usage_hint_text: None,
             root_agent_usage_hint_text: None,
             subagent_usage_hint_text: None,
+            tool_namespace: None,
             hide_spawn_agent_metadata: false,
             non_code_mode_only: false,
         }
@@ -1237,6 +1213,13 @@ impl Config {
         Ok(())
     }
 
+    pub fn effective_workspace_roots(&self) -> Vec<AbsolutePathBuf> {
+        let mut workspace_roots = self.workspace_roots.clone();
+        workspace_roots.extend(self.permissions.profile_workspace_roots().iter().cloned());
+        dedupe_absolute_paths(&mut workspace_roots);
+        workspace_roots
+    }
+
     pub fn to_models_manager_config(&self) -> ModelsManagerConfig {
         ModelsManagerConfig {
             model_context_window: self.model_context_window,
@@ -1268,7 +1251,7 @@ impl Config {
         let loaded_plugins = plugins_manager.plugins_for_config(&plugins_input).await;
         let user_mcp_server_names: Vec<String> = self.mcp_servers.get().keys().cloned().collect();
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
-        let mut plugin_mcp_owners: BTreeMap<String, String> = BTreeMap::new();
+        let mut plugin_ids_by_mcp_server_name = HashMap::new();
         for plugin in loaded_plugins
             .plugins()
             .iter()
@@ -1281,10 +1264,10 @@ impl Config {
                 self.config_layer_stack.requirements().plugins.as_ref(),
             );
             for (name, plugin_server) in plugin_mcp_servers {
-                plugin_mcp_owners
-                    .entry(name.clone())
-                    .or_insert_with(|| format!("plugin:{}", plugin.config_name));
-                configured_mcp_servers.entry(name).or_insert(plugin_server);
+                if let Entry::Vacant(entry) = configured_mcp_servers.entry(name.clone()) {
+                    entry.insert(plugin_server);
+                    plugin_ids_by_mcp_server_name.insert(name, plugin.config_name.clone());
+                }
             }
         }
         let has_empty_mcp_allowlist = self
@@ -1300,6 +1283,8 @@ impl Config {
             // above.
             filter_mcp_servers_by_requirements(&mut configured_mcp_servers, Some(mcp_requirements));
         }
+        plugin_ids_by_mcp_server_name
+            .retain(|server_name, _| configured_mcp_servers.contains_key(server_name));
 
         // External MCP discovery: scan Claude / Copilot / VS Code / Agency
         // configs so the user does not have to re-author every server in
@@ -1309,7 +1294,7 @@ impl Config {
             apply_external_mcp_discovery(
                 self,
                 &user_mcp_server_names,
-                &plugin_mcp_owners,
+                &plugin_ids_by_mcp_server_name,
                 &mut configured_mcp_servers,
             );
         }
@@ -1317,6 +1302,7 @@ impl Config {
         McpConfig {
             chatgpt_base_url: self.chatgpt_base_url.clone(),
             apps_mcp_path_override: self.apps_mcp_path_override.clone(),
+            apps_mcp_product_sku: self.apps_mcp_product_sku.clone(),
             codex_home: self.codex_home.to_path_buf(),
             mcp_oauth_credentials_store_mode: self.mcp_oauth_credentials_store_mode,
             mcp_oauth_callback_port: self.mcp_oauth_callback_port,
@@ -1339,6 +1325,7 @@ impl Config {
                 ElicitationCapability::default()
             },
             configured_mcp_servers,
+            plugin_ids_by_mcp_server_name,
             plugin_capability_summaries: loaded_plugins.capability_summaries().to_vec(),
         }
     }
@@ -2227,6 +2214,11 @@ fn resolve_multi_agent_v2_config(
         .or_else(|| base.and_then(|config| config.subagent_usage_hint_text.as_ref()))
         .cloned()
         .or(default.subagent_usage_hint_text);
+    let tool_namespace = profile
+        .and_then(|config| config.tool_namespace.as_ref())
+        .or_else(|| base.and_then(|config| config.tool_namespace.as_ref()))
+        .cloned()
+        .or(default.tool_namespace);
     let hide_spawn_agent_metadata = profile
         .and_then(|config| config.hide_spawn_agent_metadata)
         .or_else(|| base.and_then(|config| config.hide_spawn_agent_metadata))
@@ -2245,6 +2237,7 @@ fn resolve_multi_agent_v2_config(
         usage_hint_text,
         root_agent_usage_hint_text,
         subagent_usage_hint_text,
+        tool_namespace,
         hide_spawn_agent_metadata,
         non_code_mode_only,
     }
@@ -2339,6 +2332,69 @@ fn validate_multi_agent_v2_wait_timeout(label: &str, value: i64) -> std::io::Res
     Ok(())
 }
 
+fn validate_multi_agent_v2_tool_namespace(namespace: Option<&str>) -> std::io::Result<()> {
+    const LABEL: &str = "features.multi_agent_v2.tool_namespace";
+    const MAX_LEN: usize = 64;
+    const RESERVED_RESPONSES_NAMESPACES: &[&str] = &[
+        "api_tool",
+        "browser",
+        "computer",
+        "container",
+        "file_search",
+        "functions",
+        "image_gen",
+        "multi_tool_use",
+        "python",
+        "python_user_visible",
+        "submodel_delegator",
+        "terminal",
+        "tool_search",
+        "web",
+    ];
+
+    let Some(namespace) = namespace else {
+        return Ok(());
+    };
+    if namespace.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{LABEL} must not be empty"),
+        ));
+    }
+    if namespace.trim() != namespace {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{LABEL} must not have leading or trailing whitespace"),
+        ));
+    }
+    if !namespace
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{LABEL} must match ^[a-zA-Z0-9_-]+$"),
+        ));
+    }
+    if namespace.chars().count() > MAX_LEN {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{LABEL} must be at most {MAX_LEN} characters"),
+        ));
+    }
+    if namespace == "mcp"
+        || namespace.starts_with("mcp__")
+        || RESERVED_RESPONSES_NAMESPACES.contains(&namespace)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{LABEL} uses a reserved namespace: {namespace}"),
+        ));
+    }
+
+    Ok(())
+}
+
 impl Config {
     #[cfg(test)]
     async fn load_from_base_config_with_overrides(
@@ -2395,8 +2451,10 @@ impl Config {
             guardian_policy_config_source: _,
         } = config_layer_stack.requirements().clone();
 
-        let user_instructions = AgentsMdManager::load_global_instructions(Some(&codex_home))
-            .map(|loaded| loaded.contents);
+        let user_instructions =
+            AgentsMdManager::load_global_instructions(LOCAL_FS.as_ref(), Some(&codex_home))
+                .await
+                .map(|loaded| loaded.contents);
         let mut startup_warnings = config_layer_stack
             .startup_warnings()
             .unwrap_or_default()
@@ -2701,8 +2759,6 @@ impl Config {
                 configured_workspace_roots.extend(sandbox_workspace_write.writable_roots.clone());
             }
             dedupe_absolute_paths(&mut configured_workspace_roots);
-            workspace_roots.extend(configured_workspace_roots.iter().cloned());
-            dedupe_absolute_paths(&mut workspace_roots);
             file_system_sandbox_policy = file_system_sandbox_policy
                 .with_materialized_project_roots_for_workspace_roots(&configured_workspace_roots);
             let mut permission_profile = if let Some(permission_profile) =
@@ -2962,6 +3018,7 @@ impl Config {
                 "features.multi_agent_v2.default_wait_timeout_ms must be at most features.multi_agent_v2.max_wait_timeout_ms",
             ));
         }
+        validate_multi_agent_v2_tool_namespace(multi_agent_v2.tool_namespace.as_deref())?;
         let agent_max_threads_from_config = cfg.agents.as_ref().and_then(|agents| agents.max_threads);
         let agent_max_threads = if features.enabled(Feature::MultiAgentV2) {
             if agent_max_threads_from_config.is_some() {
@@ -3445,6 +3502,7 @@ impl Config {
                 .or(cfg.chatgpt_base_url)
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
             apps_mcp_path_override,
+            apps_mcp_product_sku: cfg.apps_mcp_product_sku.clone(),
             realtime_audio: cfg
                 .audio
                 .map_or_else(RealtimeAudioConfig::default, |audio| RealtimeAudioConfig {
@@ -3670,7 +3728,7 @@ pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
 fn apply_external_mcp_discovery(
     config: &Config,
     user_mcp_server_names: &[String],
-    plugin_mcp_owners: &BTreeMap<String, String>,
+    plugin_ids_by_mcp_server_name: &HashMap<String, String>,
     configured_mcp_servers: &mut HashMap<String, McpServerConfig>,
 ) {
     let settings =
@@ -3692,7 +3750,11 @@ fn apply_external_mcp_discovery(
             owner: "config.toml",
         });
     }
-    for (name, owner) in plugin_mcp_owners {
+    let plugin_mcp_owners: Vec<(String, String)> = plugin_ids_by_mcp_server_name
+        .iter()
+        .map(|(name, plugin_id)| (name.clone(), format!("plugin:{plugin_id}")))
+        .collect();
+    for (name, owner) in &plugin_mcp_owners {
         reserved.push(codex_mcp_discovery::ReservedName {
             name: name.as_str(),
             owner: owner.as_str(),
