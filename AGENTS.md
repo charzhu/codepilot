@@ -1,3 +1,57 @@
+# Codepilot Agent Guidelines
+
+Behavioral guidelines to reduce common agent mistakes in this Codepilot fork. Merge with the Rust/Codex-specific instructions below.
+
+Tradeoff: These guidelines bias toward caution and maintainability over speed. For trivial tasks, use judgment.
+
+## 1. Think Before Coding
+
+Do not assume. Do not hide confusion. Surface tradeoffs.
+
+Before implementing:
+- State assumptions explicitly for non-trivial work. If uncertain, ask.
+- If multiple interpretations exist, present them; do not pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- For new features or cross-cutting changes, produce a short plan covering goal, affected crates, data/config flow, persistence/cache impact, tests, release impact, and upstream-merge risk.
+- Classify changes as upstream-generic, Codepilot-specific, or integration-specific before choosing where code should live.
+
+## 2. Simplicity First
+
+Minimum code that solves the problem. Nothing speculative.
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No configurability that was not requested.
+- Prefer existing extension points over new plumbing through shared/core crates.
+- If a change grows large, pause and reconsider whether it can be split or simplified.
+
+## 3. Surgical Changes
+
+Touch only what you must. Clean up only your own mess.
+
+- New implementation work must happen on a dedicated branch, not directly on `main`.
+- Use the `codex/` branch prefix by default unless the user requests another name.
+- Preserve upstream Codex structure and behavior where practical to reduce future merge conflicts.
+- Do not refactor adjacent code, comments, formatting, or APIs unless required by the task.
+- If you notice unrelated dead code or bugs, mention them; do not fix them unless asked.
+- Do not merge, tag, publish, or push to `main` unless the user explicitly asks.
+
+The test: every changed line should trace directly to the user's request.
+
+## 4. Goal-Driven Execution
+
+Define success criteria. Loop until verified.
+
+Transform tasks into verifiable goals:
+- "Fix a bug" → reproduce or cover it, then make the check pass.
+- "Add UI" → add/update TUI or snapshot coverage when practical.
+- "Change packaging" → validate package staging, launcher scripts, and release workflow assumptions.
+- "Change provider/MCP discovery" → validate parsing/discovery, deduplication/precedence, cache or persisted-state compatibility, and startup/runtime availability.
+
+Run the narrowest relevant tests first, then broader checks when warranted.
+
+For architecture-sensitive work, use appropriate specialized review or agents when available and authorized, such as Rust/core, TUI, MCP, provider/auth, packaging/release, or GitHub workflow review.
+
 # Rust/codex-rs
 
 In the codex-rs folder where the rust code lives:
