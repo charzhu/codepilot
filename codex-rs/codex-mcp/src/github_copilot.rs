@@ -18,11 +18,34 @@ use codex_model_provider::BearerAuthProvider;
 pub const GITHUB_COPILOT_MCP_SERVER_NAME: &str = "github-mcp-server";
 pub const GITHUB_COPILOT_MCP_SERVER_URL: &str =
     "https://api.enterprise.githubcopilot.com/mcp/readonly";
-const GITHUB_COPILOT_MCP_TOOLS: [&str; 6] = [
+const GITHUB_COPILOT_MCP_TOOLS: [&str; 29] = [
+    "get_commit",
+    "get_copilot_job_status",
     "get_copilot_space",
     "get_file_contents",
+    "get_label",
+    "get_latest_release",
+    "get_me",
+    "get_release_by_tag",
+    "get_tag",
+    "get_team_members",
+    "get_teams",
+    "issue_read",
+    "list_branches",
+    "list_commits",
     "list_copilot_spaces",
+    "list_issue_types",
+    "list_issues",
+    "list_pull_requests",
+    "list_releases",
+    "list_repository_collaborators",
+    "list_tags",
+    "pull_request_read",
+    "run_secret_scanning",
     "search_code",
+    "search_issues",
+    "search_pull_requests",
+    "search_repositories",
     "search_users",
     "web_search",
 ];
@@ -160,7 +183,7 @@ mod tests {
     }
 
     #[test]
-    fn github_copilot_mcp_server_config_requests_copilot_cli_toolset() {
+    fn github_copilot_mcp_server_config_requests_union_toolset() {
         let config = github_copilot_mcp_server_config();
         let codex_config::McpServerTransportConfig::StreamableHttp { http_headers, .. } =
             config.transport
@@ -174,16 +197,39 @@ mod tests {
                 .and_then(|headers| headers.get("X-MCP-Tools"))
                 .map(String::as_str),
             Some(
-                "get_copilot_space,get_file_contents,list_copilot_spaces,search_code,search_users,web_search"
+                "get_commit,get_copilot_job_status,get_copilot_space,get_file_contents,get_label,get_latest_release,get_me,get_release_by_tag,get_tag,get_team_members,get_teams,issue_read,list_branches,list_commits,list_copilot_spaces,list_issue_types,list_issues,list_pull_requests,list_releases,list_repository_collaborators,list_tags,pull_request_read,run_secret_scanning,search_code,search_issues,search_pull_requests,search_repositories,search_users,web_search"
             )
         );
         assert_eq!(
             config.enabled_tools,
             Some(vec![
+                "get_commit".to_string(),
+                "get_copilot_job_status".to_string(),
                 "get_copilot_space".to_string(),
                 "get_file_contents".to_string(),
+                "get_label".to_string(),
+                "get_latest_release".to_string(),
+                "get_me".to_string(),
+                "get_release_by_tag".to_string(),
+                "get_tag".to_string(),
+                "get_team_members".to_string(),
+                "get_teams".to_string(),
+                "issue_read".to_string(),
+                "list_branches".to_string(),
+                "list_commits".to_string(),
                 "list_copilot_spaces".to_string(),
+                "list_issue_types".to_string(),
+                "list_issues".to_string(),
+                "list_pull_requests".to_string(),
+                "list_releases".to_string(),
+                "list_repository_collaborators".to_string(),
+                "list_tags".to_string(),
+                "pull_request_read".to_string(),
+                "run_secret_scanning".to_string(),
                 "search_code".to_string(),
+                "search_issues".to_string(),
+                "search_pull_requests".to_string(),
+                "search_repositories".to_string(),
                 "search_users".to_string(),
                 "web_search".to_string(),
             ])
