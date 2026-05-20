@@ -18,6 +18,14 @@ use codex_model_provider::BearerAuthProvider;
 pub const GITHUB_COPILOT_MCP_SERVER_NAME: &str = "github-mcp-server";
 pub const GITHUB_COPILOT_MCP_SERVER_URL: &str =
     "https://api.enterprise.githubcopilot.com/mcp/readonly";
+const GITHUB_COPILOT_MCP_TOOLS: [&str; 6] = [
+    "get_copilot_space",
+    "get_file_contents",
+    "list_copilot_spaces",
+    "search_code",
+    "search_users",
+    "web_search",
+];
 
 pub fn github_copilot_mcp_auth_available(codex_home: &Path) -> bool {
     match load_github_copilot_auth(codex_home) {
@@ -46,7 +54,7 @@ pub fn github_copilot_mcp_server_config() -> McpServerConfig {
         startup_timeout_sec: None,
         tool_timeout_sec: None,
         default_tools_approval_mode: None,
-        enabled_tools: None,
+        enabled_tools: Some(github_copilot_mcp_tools()),
         disabled_tools: None,
         scopes: None,
         oauth: None,
@@ -57,6 +65,10 @@ pub fn github_copilot_mcp_server_config() -> McpServerConfig {
 
 fn github_copilot_mcp_http_headers() -> HashMap<String, String> {
     HashMap::from([
+        (
+            "X-MCP-Tools".to_string(),
+            GITHUB_COPILOT_MCP_TOOLS.join(","),
+        ),
         (
             "user-agent".to_string(),
             GITHUB_COPILOT_USER_AGENT.to_string(),
@@ -78,6 +90,13 @@ fn github_copilot_mcp_http_headers() -> HashMap<String, String> {
             GITHUB_COPILOT_OPENAI_INTENT.to_string(),
         ),
     ])
+}
+
+fn github_copilot_mcp_tools() -> Vec<String> {
+    GITHUB_COPILOT_MCP_TOOLS
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 pub async fn github_copilot_mcp_auth_provider(
@@ -108,6 +127,7 @@ mod tests {
     use serde_json::json;
 
     use super::github_copilot_mcp_auth_provider;
+    use super::github_copilot_mcp_server_config;
 
     #[tokio::test]
     async fn github_copilot_mcp_auth_provider_uses_github_token() {
@@ -136,6 +156,37 @@ mod tests {
                 .get("authorization")
                 .and_then(|value| value.to_str().ok()),
             Some("Bearer github-token")
+        );
+    }
+
+    #[test]
+    fn github_copilot_mcp_server_config_requests_copilot_cli_toolset() {
+        let config = github_copilot_mcp_server_config();
+        let codex_config::McpServerTransportConfig::StreamableHttp { http_headers, .. } =
+            config.transport
+        else {
+            panic!("expected streamable http transport");
+        };
+
+        assert_eq!(
+            http_headers
+                .as_ref()
+                .and_then(|headers| headers.get("X-MCP-Tools"))
+                .map(String::as_str),
+            Some(
+                "get_copilot_space,get_file_contents,list_copilot_spaces,search_code,search_users,web_search"
+            )
+        );
+        assert_eq!(
+            config.enabled_tools,
+            Some(vec![
+                "get_copilot_space".to_string(),
+                "get_file_contents".to_string(),
+                "list_copilot_spaces".to_string(),
+                "search_code".to_string(),
+                "search_users".to_string(),
+                "web_search".to_string(),
+            ])
         );
     }
 }
