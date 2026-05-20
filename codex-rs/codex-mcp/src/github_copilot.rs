@@ -87,7 +87,7 @@ pub async fn github_copilot_mcp_auth_provider(
         return Ok(None);
     };
     Ok(Some(Arc::new(BearerAuthProvider::new(
-        auth.copilot_access_token,
+        auth.github_access_token,
     ))))
 }
 
@@ -99,5 +99,43 @@ pub async fn github_copilot_mcp_runtime_auth_available(codex_home: &Path) -> boo
             tracing::warn!(error = %err, "failed to load GitHub Copilot auth for builtin MCP");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use super::github_copilot_mcp_auth_provider;
+
+    #[tokio::test]
+    async fn github_copilot_mcp_auth_provider_uses_github_token() {
+        let codex_home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            codex_home.path().join("github-copilot-auth.json"),
+            json!({
+                "github_access_token": "github-token",
+                "copilot_access_token": "tid=1;proxy-ep=https%3A%2F%2Fapi.enterprise.githubcopilot.com;sku=x",
+                "copilot_token_expires_at": "2999-01-01T00:00:00Z",
+                "api_base_url": "https://api.enterprise.githubcopilot.com",
+                "saved_at": "2026-01-01T00:00:00Z"
+            })
+            .to_string(),
+        )
+        .expect("write auth");
+
+        let provider = github_copilot_mcp_auth_provider(codex_home.path())
+            .await
+            .expect("provider should load")
+            .expect("provider should exist");
+
+        let headers = provider.to_auth_headers();
+        assert_eq!(
+            headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer github-token")
+        );
     }
 }
