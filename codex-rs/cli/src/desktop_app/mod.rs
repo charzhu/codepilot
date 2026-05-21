@@ -17,6 +17,8 @@ pub async fn run_app_open_or_install(
 pub async fn run_app_open_or_install(
     workspace: std::path::PathBuf,
     download_url_override: Option<String>,
+    codepilot_cli_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
-    windows::run_windows_app_open_or_install(workspace, download_url_override).await
+    windows::run_windows_app_open_or_install(workspace, download_url_override, codepilot_cli_path)
+        .await
 }

@@ -1095,7 +1095,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 root_remote_auth_token_env.as_deref(),
                 "app",
             )?;
-            app_cmd::run_app(app_cli).await?;
+            let codepilot_cli_path = arg0_is_codepilot(arg0.as_deref())
+                .then(|| arg0_paths.codex_self_exe.clone())
+                .flatten();
+            app_cmd::run_app(app_cli, codepilot_cli_path).await?;
         }
         Some(Subcommand::Resume(ResumeCommand {
             session_id,

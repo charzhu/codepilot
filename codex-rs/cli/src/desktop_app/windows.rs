@@ -10,10 +10,17 @@ const CODEX_MICROSOFT_STORE_WEB_URL: &str = "https://apps.microsoft.com/detail/9
 pub async fn run_windows_app_open_or_install(
     workspace: PathBuf,
     download_url_override: Option<String>,
+    codepilot_cli_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    if let Some(codepilot_cli_path) = codepilot_cli_path.as_deref()
+        && let Err(err) = link_codex_app_to_codepilot_cli(codepilot_cli_path).await
+    {
+        eprintln!("warning: failed to point Codex Desktop at Codepilot CLI: {err:#}");
+    }
+
     if let Some(app_id) = find_codex_app_id().await? {
         eprintln!("Opening Codex Desktop...");
-        open_installed_codex_app(&app_id).await?;
+        open_installed_codex_app(&app_id, codepilot_cli_path.as_deref()).await?;
         eprintln!(
             "In Codex Desktop, open workspace {workspace}.",
             workspace = display_workspace_path(&workspace)
@@ -33,6 +40,32 @@ pub async fn run_windows_app_open_or_install(
         workspace = display_workspace_path(&workspace)
     );
     Ok(())
+}
+
+async fn link_codex_app_to_codepilot_cli(codepilot_cli_path: &Path) -> anyhow::Result<()> {
+    let status = Command::new("powershell.exe")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Command")
+        .arg(
+            "& { param($path) [Environment]::SetEnvironmentVariable('CODEX_CLI_PATH', $path, 'User') }",
+        )
+        .arg(codepilot_cli_path)
+        .status()
+        .await
+        .context("failed to invoke `powershell.exe` to set CODEX_CLI_PATH")?;
+
+    if status.success() {
+        eprintln!(
+            "Linked Codex Desktop to Codepilot CLI at {path}. Restart Codex Desktop if it is already running.",
+            path = display_workspace_path(codepilot_cli_path)
+        );
+        Ok(())
+    } else {
+        anyhow::bail!("failed to set CODEX_CLI_PATH with {status}");
+    }
 }
 
 async fn find_codex_app_id() -> anyhow::Result<Option<String>> {
@@ -56,9 +89,12 @@ async fn find_codex_app_id() -> anyhow::Result<Option<String>> {
     }
 }
 
-async fn open_installed_codex_app(app_id: &str) -> anyhow::Result<()> {
+async fn open_installed_codex_app(
+    app_id: &str,
+    codepilot_cli_path: Option<&Path>,
+) -> anyhow::Result<()> {
     let target = format!("shell:AppsFolder\\{app_id}");
-    open_shell_target(&target).await
+    open_shell_target(&target, codepilot_cli_path).await
 }
 
 async fn open_url(url: &str) -> anyhow::Result<()> {
@@ -78,10 +114,14 @@ async fn open_url(url: &str) -> anyhow::Result<()> {
     }
 }
 
-async fn open_shell_target(target: &str) -> anyhow::Result<()> {
+async fn open_shell_target(target: &str, codepilot_cli_path: Option<&Path>) -> anyhow::Result<()> {
     // Explorer can successfully hand off shell targets and still return exit code 1.
-    let _status = Command::new("explorer.exe")
-        .arg(target)
+    let mut command = Command::new("explorer.exe");
+    command.arg(target);
+    if let Some(codepilot_cli_path) = codepilot_cli_path {
+        command.env("CODEX_CLI_PATH", codepilot_cli_path);
+    }
+    let _status = command
         .status()
         .await
         .with_context(|| format!("failed to open {target}"))?;

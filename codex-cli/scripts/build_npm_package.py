@@ -318,7 +318,10 @@ def write_codepilot_readme(staging_dir: Path) -> None:
         "Then run:\n\n"
         "```sh\n"
         "codepilot --version\n"
-        "```\n",
+        "```\n\n"
+        "On Windows, installing Codepilot also points the Codex app at the bundled "
+        "Codepilot executable by setting the user-level `CODEX_CLI_PATH` environment "
+        "variable. Restart the Codex app after installing or upgrading.\n",
         encoding="utf-8",
     )
 

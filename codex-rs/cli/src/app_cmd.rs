@@ -12,7 +12,10 @@ pub struct AppCommand {
     pub download_url_override: Option<String>,
 }
 
-pub async fn run_app(cmd: AppCommand) -> anyhow::Result<()> {
+pub async fn run_app(cmd: AppCommand, codepilot_cli_path: Option<PathBuf>) -> anyhow::Result<()> {
+    #[cfg(not(target_os = "windows"))]
+    let _ = codepilot_cli_path;
+
     let workspace = std::fs::canonicalize(&cmd.path).unwrap_or(cmd.path);
     #[cfg(target_os = "macos")]
     {
@@ -20,6 +23,11 @@ pub async fn run_app(cmd: AppCommand) -> anyhow::Result<()> {
     }
     #[cfg(target_os = "windows")]
     {
-        crate::desktop_app::run_app_open_or_install(workspace, cmd.download_url_override).await
+        crate::desktop_app::run_app_open_or_install(
+            workspace,
+            cmd.download_url_override,
+            codepilot_cli_path,
+        )
+        .await
     }
 }
