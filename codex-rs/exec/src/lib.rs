@@ -81,6 +81,9 @@ use codex_otel::traceparent_context_from_env;
 use codex_protocol::SessionId;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::fleet::FleetCommandKind;
+use codex_protocol::fleet::FleetPromptOptions;
+use codex_protocol::fleet::expand_fleet_prompt;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -634,13 +637,14 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 })
                 .or(root_prompt);
             let prompt_text = resolve_prompt(prompt_arg);
+            let model_prompt_text = expand_fleet_exec_prompt(prompt_text.clone(), &config);
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
                 .chain(args.images.iter().cloned())
                 .map(|path| UserInput::LocalImage { path, detail: None })
                 .collect();
             items.push(UserInput::Text {
-                text: prompt_text.clone(),
+                text: model_prompt_text,
                 // CLI input doesn't track UI element ranges, so none are available here.
                 text_elements: Vec::new(),
             });
@@ -655,12 +659,13 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
         (None, root_prompt, imgs) => {
             let prompt_text = resolve_root_prompt(root_prompt);
+            let model_prompt_text = expand_fleet_exec_prompt(prompt_text.clone(), &config);
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
                 .map(|path| UserInput::LocalImage { path, detail: None })
                 .collect();
             items.push(UserInput::Text {
-                text: prompt_text.clone(),
+                text: model_prompt_text,
                 // CLI input doesn't track UI element ranges, so none are available here.
                 text_elements: Vec::new(),
             });
@@ -1852,6 +1857,21 @@ fn resolve_root_prompt(prompt_arg: Option<String>) -> String {
             }
         }
         maybe_dash => resolve_prompt(maybe_dash),
+    }
+}
+
+fn expand_fleet_exec_prompt(prompt: String, config: &Config) -> String {
+    let expansion = expand_fleet_prompt(
+        &prompt,
+        FleetPromptOptions {
+            multi_agent_v2_enabled: config.multi_agent_v2_enabled(),
+            max_concurrent_agents: config.agent_max_threads,
+        },
+    );
+    if expansion.kind == FleetCommandKind::Run {
+        expansion.model_text
+    } else {
+        prompt
     }
 }
 

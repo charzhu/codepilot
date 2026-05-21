@@ -7,7 +7,7 @@
 use super::*;
 
 impl App {
-    pub(super) async fn open_agent_picker(&mut self, app_server: &mut AppServerSession) {
+    async fn refresh_agent_picker_liveness(&mut self, app_server: &mut AppServerSession) {
         let mut thread_ids = self.agent_navigation.tracked_thread_ids();
         for thread_id in self.thread_event_channels.keys().copied() {
             if !thread_ids.contains(&thread_id) {
@@ -18,13 +18,14 @@ impl App {
             if self.side_threads.contains_key(&thread_id) {
                 continue;
             }
-            if !self
+            let _is_available = self
                 .refresh_agent_picker_thread_liveness(app_server, thread_id)
-                .await
-            {
-                continue;
-            }
+                .await;
         }
+    }
+
+    pub(super) async fn open_agent_picker(&mut self, app_server: &mut AppServerSession) {
+        self.refresh_agent_picker_liveness(app_server).await;
 
         let has_non_primary_agent_thread = self
             .agent_navigation
@@ -81,6 +82,28 @@ impl App {
             initial_selected_idx,
             ..Default::default()
         });
+    }
+
+    pub(super) async fn open_fleet_status(&mut self, app_server: &mut AppServerSession) {
+        self.refresh_agent_picker_liveness(app_server).await;
+
+        let rows = self
+            .agent_navigation
+            .ordered_threads()
+            .into_iter()
+            .filter(|(thread_id, _)| Some(*thread_id) != self.primary_thread_id)
+            .map(|(thread_id, entry)| crate::fleet::FleetStatusThread {
+                thread_id,
+                agent_nickname: entry.agent_nickname.clone(),
+                agent_role: entry.agent_role.clone(),
+                is_closed: entry.is_closed,
+                is_primary: self.primary_thread_id == Some(thread_id),
+                is_current: self.active_thread_id == Some(thread_id),
+            })
+            .collect();
+
+        self.chat_widget
+            .show_selection_view(crate::fleet::fleet_status_params(rows));
     }
 
     pub(super) fn is_terminal_thread_read_error(err: &color_eyre::Report) -> bool {

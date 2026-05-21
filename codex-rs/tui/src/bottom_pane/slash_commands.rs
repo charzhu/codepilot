@@ -111,6 +111,10 @@ pub(crate) fn commands_for_input(
 /// Side-conversation gating is intentionally enforced by dispatch rather than exact lookup so a
 /// typed command can produce a side-specific unavailable message while the popup still hides it.
 pub(crate) fn find_builtin_command(name: &str, flags: BuiltinCommandFlags) -> Option<SlashCommand> {
+    if name == "tasks" {
+        return Some(SlashCommand::Tasks);
+    }
+
     let cmd = SlashCommand::from_str(name).ok()?;
     builtins_for_input(BuiltinCommandFlags {
         side_conversation_active: false,
@@ -200,6 +204,19 @@ mod tests {
         assert_eq!(
             find_builtin_command("clean", all_enabled_flags()),
             Some(SlashCommand::Stop)
+        );
+    }
+
+    #[test]
+    fn tasks_alias_resolves_for_dispatch_but_stays_hidden() {
+        assert_eq!(
+            find_builtin_command("tasks", all_enabled_flags()),
+            Some(SlashCommand::Tasks)
+        );
+        assert!(
+            !builtins_for_input(all_enabled_flags())
+                .iter()
+                .any(|(_, command)| *command == SlashCommand::Tasks)
         );
     }
 

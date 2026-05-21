@@ -36,6 +36,9 @@ pub enum SlashCommand {
     Compact,
     Plan,
     Goal,
+    Fleet,
+    #[strum(to_string = "tasks")]
+    Tasks,
     Agent,
     Side,
     Copy,
@@ -116,6 +119,8 @@ impl SlashCommand {
             SlashCommand::Settings => "configure realtime microphone/speaker",
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
+            SlashCommand::Fleet => "run a task with multi-agent orchestration",
+            SlashCommand::Tasks => "show fleet task status",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
@@ -152,6 +157,7 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Goal
+                | SlashCommand::Fleet
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
@@ -214,6 +220,8 @@ impl SlashCommand {
             | SlashCommand::Ps
             | SlashCommand::Stop
             | SlashCommand::Goal
+            | SlashCommand::Fleet
+            | SlashCommand::Tasks
             | SlashCommand::Mcp
             | SlashCommand::Apps
             | SlashCommand::Plugins
@@ -239,6 +247,7 @@ impl SlashCommand {
             SlashCommand::SandboxReadRoot => cfg!(target_os = "windows"),
             SlashCommand::Copy => !cfg!(target_os = "android"),
             SlashCommand::Rollout | SlashCommand::TestApproval => cfg!(debug_assertions),
+            SlashCommand::Tasks => false,
             _ => true,
         }
     }
@@ -280,6 +289,22 @@ mod tests {
         assert_eq!(SlashCommand::from_str("skin"), Ok(SlashCommand::Skin));
         assert!(SlashCommand::Skin.supports_inline_args());
         assert!(!SlashCommand::Skin.available_during_task());
+    }
+
+    #[test]
+    fn fleet_command_parses_and_supports_args() {
+        assert_eq!(SlashCommand::from_str("fleet"), Ok(SlashCommand::Fleet));
+        assert!(SlashCommand::Fleet.supports_inline_args());
+        assert!(SlashCommand::Fleet.available_during_task());
+    }
+
+    #[test]
+    fn tasks_command_is_hidden_fleet_status_alias() {
+        assert_eq!(SlashCommand::from_str("tasks"), Ok(SlashCommand::Tasks));
+        assert_eq!(SlashCommand::Tasks.command(), "tasks");
+        assert!(!SlashCommand::Tasks.supports_inline_args());
+        assert!(SlashCommand::Tasks.available_during_task());
+        assert!(!SlashCommand::Tasks.is_visible());
     }
 
     #[test]

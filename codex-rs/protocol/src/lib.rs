@@ -13,6 +13,7 @@ pub mod config_types;
 pub mod dynamic_tools;
 pub mod error;
 pub mod exec_output;
+pub mod fleet;
 pub mod items;
 pub mod mcp;
 pub mod mcp_approval_meta;

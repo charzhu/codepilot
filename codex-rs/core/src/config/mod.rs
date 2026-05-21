@@ -1198,6 +1198,10 @@ impl ConfigBuilder {
 }
 
 impl Config {
+    pub fn multi_agent_v2_enabled(&self) -> bool {
+        self.features.enabled(Feature::MultiAgentV2)
+    }
+
     pub fn legacy_sandbox_policy(&self) -> SandboxPolicy {
         self.permissions.legacy_sandbox_policy(self.cwd.as_path())
     }

@@ -2286,6 +2286,37 @@ async fn multi_agent_enable_prompt_updates_feature_and_emits_notice() {
 }
 
 #[tokio::test]
+async fn fleet_status_board_snapshot() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let main_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid thread");
+    let worker_thread_id =
+        ThreadId::from_string("00000000-0000-0000-0000-000000000002").expect("valid thread");
+
+    chat.show_selection_view(crate::fleet::fleet_status_params(vec![
+        crate::fleet::FleetStatusThread {
+            thread_id: main_thread_id,
+            agent_nickname: None,
+            agent_role: None,
+            is_closed: false,
+            is_primary: true,
+            is_current: true,
+        },
+        crate::fleet::FleetStatusThread {
+            thread_id: worker_thread_id,
+            agent_nickname: Some("Scout".to_string()),
+            agent_role: Some("explorer".to_string()),
+            is_closed: true,
+            is_primary: false,
+            is_current: false,
+        },
+    ]));
+
+    let popup = render_bottom_popup(&chat, /*width*/ 96);
+    assert_chatwidget_snapshot!("fleet_status_board", popup);
+}
+
+#[tokio::test]
 async fn memories_enable_prompt_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::MemoryTool, /*enabled*/ false);

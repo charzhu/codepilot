@@ -137,6 +137,8 @@ pub(crate) enum KeymapEditIntent {
 pub(crate) enum AppEvent {
     /// Open the agent picker for switching active threads.
     OpenAgentPicker,
+    /// Open the fleet status board for active and completed agent threads.
+    OpenFleetStatus,
     /// Switch the active thread to the selected agent.
     SelectAgentThread(ThreadId),
 

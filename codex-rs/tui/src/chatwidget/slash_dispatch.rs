@@ -6,6 +6,7 @@
 //! slash-command recall follows the same submitted-input rule as ordinary text.
 
 use super::goal_validation::GoalObjectiveValidationSource;
+use super::user_messages::UserMessageHistoryOverride;
 use super::*;
 use crate::app_event::ThreadGoalSetMode;
 use crate::bottom_pane::prompt_args::parse_slash_name;
@@ -13,6 +14,11 @@ use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_slash_command;
+use codex_protocol::fleet::FLEET_USAGE;
+use codex_protocol::fleet::FleetCommandKind;
+use codex_protocol::fleet::FleetPromptOptions;
+use codex_protocol::fleet::expand_fleet_prompt;
+use codex_protocol::fleet::fleet_task_offset;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -38,6 +44,29 @@ const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
 const LOGIN_USAGE: &str = "Usage: /login github-copilot";
+
+fn rebase_text_elements(elements: &[TextElement], offset: usize) -> Vec<TextElement> {
+    elements
+        .iter()
+        .map(|element| element.map_range(|range| (range.start + offset..range.end + offset).into()))
+        .collect()
+}
+
+fn trimmed_task_and_elements(
+    text: &str,
+    text_elements: Vec<TextElement>,
+) -> (String, Vec<TextElement>) {
+    let trimmed_start = text.trim_start();
+    let start = text.len().saturating_sub(trimmed_start.len());
+    let trimmed = trimmed_start.trim_end();
+    let end = start + trimmed.len();
+    let trimmed_elements = text_elements
+        .into_iter()
+        .filter(|element| element.byte_range.start >= start && element.byte_range.end <= end)
+        .map(|element| element.map_range(|range| (range.start - start..range.end - start).into()))
+        .collect();
+    (trimmed.to_string(), trimmed_elements)
+}
 
 impl ChatWidget {
     /// Dispatch a bare slash command and record its staged local-history entry.
@@ -122,6 +151,70 @@ impl ChatWidget {
         };
 
         self.request_side_conversation(parent_thread_id, /*user_message*/ None);
+    }
+
+    fn fleet_prompt_options(&self) -> FleetPromptOptions {
+        FleetPromptOptions {
+            multi_agent_v2_enabled: self.config.features.enabled(Feature::MultiAgentV2),
+            max_concurrent_agents: self.config.agent_max_threads,
+        }
+    }
+
+    fn handle_fleet_command_args(&mut self, user_message: UserMessage) {
+        let UserMessage {
+            text,
+            local_images,
+            remote_image_urls,
+            text_elements,
+            mention_bindings,
+        } = user_message;
+        let (task, task_elements) = trimmed_task_and_elements(&text, text_elements);
+        let expansion = expand_fleet_prompt(&format!("/fleet {task}"), self.fleet_prompt_options());
+
+        match expansion.kind {
+            FleetCommandKind::Run => {
+                if self.bottom_pane.is_task_running() {
+                    self.add_to_history(history_cell::new_error_event(
+                        "'/fleet' cannot start a new task while another task is in progress."
+                            .to_string(),
+                    ));
+                    self.request_redraw();
+                    return;
+                }
+                if !self.config.features.enabled(Feature::Collab) {
+                    self.open_multi_agent_enable_prompt();
+                    return;
+                }
+                let model_text_elements = fleet_task_offset(&expansion.model_text)
+                    .map(|task_offset| rebase_text_elements(&task_elements, task_offset))
+                    .unwrap_or_default();
+                let history_text_elements = rebase_text_elements(&task_elements, "/fleet ".len());
+                let submitted = UserMessage {
+                    text: expansion.model_text,
+                    local_images,
+                    remote_image_urls,
+                    text_elements: model_text_elements,
+                    mention_bindings,
+                };
+                let history_record =
+                    UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
+                        text: expansion.history_text,
+                        text_elements: history_text_elements,
+                    });
+                let _accepted =
+                    self.submit_user_message_with_history_record(submitted, history_record);
+            }
+            FleetCommandKind::Status => {
+                self.app_event_tx.send(AppEvent::OpenFleetStatus);
+                self.append_message_history_entry(expansion.history_text);
+            }
+            FleetCommandKind::UsageError => {
+                self.add_error_message(expansion.model_text);
+            }
+            FleetCommandKind::NotFleet => {
+                self.add_error_message(FLEET_USAGE.to_string());
+            }
+        }
     }
 
     fn emit_raw_output_mode_changed(&self, enabled: bool) {
@@ -257,6 +350,13 @@ impl ChatWidget {
                         Some(GOAL_USAGE_HINT.to_string()),
                     );
                 }
+            }
+            SlashCommand::Fleet => {
+                self.add_error_message(FLEET_USAGE.to_string());
+            }
+            SlashCommand::Tasks => {
+                self.app_event_tx.send(AppEvent::OpenFleetStatus);
+                self.append_message_history_entry("/tasks".to_string());
             }
             SlashCommand::Side => {
                 self.request_empty_side_conversation();
@@ -529,6 +629,17 @@ impl ChatWidget {
             return;
         }
 
+        if cmd == SlashCommand::Fleet
+            && !trimmed.eq_ignore_ascii_case("status")
+            && self.bottom_pane.is_task_running()
+        {
+            self.add_to_history(history_cell::new_error_event(
+                "'/fleet' cannot start a new task while another task is in progress.".to_string(),
+            ));
+            self.request_redraw();
+            return;
+        }
+
         if cmd == SlashCommand::Goal
             && !self.goal_objective_with_pending_pastes_is_allowed(&args, &text_elements)
         {
@@ -793,6 +904,17 @@ impl ChatWidget {
                 );
                 self.request_side_conversation(parent_thread_id, Some(user_message));
             }
+            SlashCommand::Fleet if !trimmed.is_empty() => {
+                let user_message = self.prepared_inline_user_message(
+                    args,
+                    text_elements,
+                    local_images,
+                    remote_image_urls,
+                    mention_bindings,
+                    source,
+                );
+                self.handle_fleet_command_args(user_message);
+            }
             SlashCommand::Review if !trimmed.is_empty() => {
                 self.submit_op(AppCommand::review(ReviewTarget::Custom {
                     instructions: args,
@@ -972,6 +1094,8 @@ impl ChatWidget {
             | SlashCommand::Rollout
             | SlashCommand::Copy
             | SlashCommand::Raw
+            | SlashCommand::Fleet
+            | SlashCommand::Tasks
             | SlashCommand::Vim
             | SlashCommand::Diff
             | SlashCommand::Rename

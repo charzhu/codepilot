@@ -259,6 +259,29 @@ fn prompt_with_stdin_context_preserves_trailing_newline() {
     );
 }
 
+#[tokio::test]
+async fn fleet_exec_prompt_expands_run_and_leaves_status_unchanged() {
+    let codex_home = tempdir().expect("create temp codex home");
+    let cwd = tempdir().expect("create temp cwd");
+    let mut config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("build default config");
+    config.agent_max_threads = Some(2);
+
+    let expanded = expand_fleet_exec_prompt("/fleet fix the failing tests".to_string(), &config);
+
+    assert!(expanded.contains("<fleet_mode>"));
+    assert!(expanded.contains("Original user request:\nfix the failing tests"));
+    assert!(expanded.contains("at most 2 concurrent agent threads"));
+    assert_eq!(
+        expand_fleet_exec_prompt("/fleet status".to_string(), &config),
+        "/fleet status"
+    );
+}
+
 #[test]
 fn lagged_event_warning_message_is_explicit() {
     assert_eq!(

@@ -87,6 +87,21 @@ fn next_add_to_history_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEv
     }
 }
 
+fn next_open_fleet_status_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) {
+    loop {
+        match rx.try_recv() {
+            Ok(AppEvent::OpenFleetStatus) => return,
+            Ok(_) => continue,
+            Err(TryRecvError::Empty) => {
+                panic!("expected OpenFleetStatus event but queue was empty")
+            }
+            Err(TryRecvError::Disconnected) => {
+                panic!("expected OpenFleetStatus event but channel closed")
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn service_tier_commands_lowercase_catalog_names() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
@@ -103,6 +118,117 @@ async fn service_tier_commands_lowercase_catalog_names() {
             description: expected_description,
         }]
     );
+}
+
+#[tokio::test]
+async fn fleet_slash_command_submits_expanded_prompt_with_original_history() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Collab, /*enabled*/ true);
+    chat.thread_id = Some(ThreadId::new());
+
+    submit_composer_text(&mut chat, "/fleet implement retry handling");
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => {
+            let [
+                UserInput::Text {
+                    text,
+                    text_elements,
+                },
+            ] = items.as_slice()
+            else {
+                panic!("expected one text item, got {items:?}");
+            };
+            assert!(text.contains("<fleet_mode>"));
+            assert!(text.contains("Original user request:\nimplement retry handling"));
+            assert!(text.contains("Retry policy:"));
+            assert!(text_elements.is_empty());
+        }
+        other => panic!("expected fleet user turn, got {other:?}"),
+    }
+    assert_eq!(
+        next_add_to_history_event(&mut rx),
+        "/fleet implement retry handling"
+    );
+}
+
+#[tokio::test]
+async fn fleet_slash_command_rebases_text_elements_to_original_request() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::Collab, /*enabled*/ true);
+    chat.thread_id = Some(ThreadId::new());
+
+    let task = "User invoked /fleet.";
+    let command = format!("/fleet {task}");
+    let task_start = "/fleet ".len();
+    chat.bottom_pane.set_composer_text(
+        command,
+        vec![TextElement::new(
+            (task_start..task_start + task.len()).into(),
+            Some("task-marker".to_string()),
+        )],
+        Vec::new(),
+    );
+    submit_current_composer(&mut chat);
+
+    let Op::UserTurn { items, .. } = next_submit_op(&mut op_rx) else {
+        panic!("expected fleet user turn");
+    };
+    let [
+        UserInput::Text {
+            text,
+            text_elements,
+        },
+    ] = items.as_slice()
+    else {
+        panic!("expected one text item, got {items:?}");
+    };
+    let marker_offset = text
+        .find(codex_protocol::fleet::FLEET_ORIGINAL_REQUEST_MARKER)
+        .expect("original request marker");
+    let expected_start = marker_offset + codex_protocol::fleet::FLEET_ORIGINAL_REQUEST_MARKER.len();
+
+    assert_eq!(text_elements.len(), 1);
+    assert_eq!(text_elements[0].byte_range.start, expected_start);
+    assert_eq!(text_elements[0].byte_range.end, expected_start + task.len());
+    assert_eq!(&text[expected_start..expected_start + task.len()], task);
+}
+
+#[tokio::test]
+async fn fleet_status_slash_command_opens_status_board() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    submit_composer_text(&mut chat, "/fleet status");
+
+    next_open_fleet_status_event(&mut rx);
+    assert_no_submit_op(&mut op_rx);
+}
+
+#[tokio::test]
+async fn tasks_slash_command_opens_fleet_status_board() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    submit_composer_text(&mut chat, "/tasks");
+
+    next_open_fleet_status_event(&mut rx);
+    assert_no_submit_op(&mut op_rx);
+}
+
+#[tokio::test]
+async fn fleet_run_while_task_running_rejects_without_submit() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    submit_composer_text(&mut chat, "/fleet start another task");
+
+    assert_no_submit_op(&mut op_rx);
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("cannot start a new task while another task is in progress"));
 }
 
 #[tokio::test]
