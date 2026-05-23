@@ -1,6 +1,7 @@
 {
   "name": "@charzhu/codepilot",
   "version": "0.0.0-dev",
+  "description": "Codex CLI is a coding agent from OpenAI that runs locally on your computer.",
   "license": "Apache-2.0",
   "bin": {
     "codepilot": "bin/codepilot.js",
@@ -12,9 +13,7 @@
   },
   "files": [
     "bin/codepilot.js",
-    "bin/codex.js",
-    "bin/rg",
-    "vendor"
+    "bin/codex.js"
   ],
   "publishConfig": {
     "access": "public",

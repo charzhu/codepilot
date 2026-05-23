@@ -73,7 +73,6 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
     let init = ChatWidgetInit {
         config: cfg.clone(),
-        environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         frame_requester: FrameRequester::test_dummy(),
         app_event_tx: AppEventSender::new(unbounded_channel::<AppEvent>().0),
         workspace_command_runner: None,
@@ -1861,198 +1860,6 @@ async fn apps_popup_shows_disabled_status_for_installed_but_disabled_apps() {
 }
 
 #[tokio::test]
-async fn apps_initial_load_applies_enabled_state_from_config() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    set_chatgpt_auth(&mut chat);
-    chat.config
-        .features
-        .enable(Feature::Apps)
-        .expect("test config should allow feature update");
-    chat.bottom_pane.set_connectors_enabled(/*enabled*/ true);
-
-    let temp = tempdir().expect("tempdir");
-    let config_toml_path = temp.path().join("config.toml").abs();
-    let user_config = toml::from_str::<TomlValue>(
-        "[apps.connector_1]\nenabled = false\ndisabled_reason = \"user\"\n",
-    )
-    .expect("apps config");
-    chat.config.config_layer_stack = chat
-        .config
-        .config_layer_stack
-        .with_user_config(&config_toml_path, user_config);
-
-    chat.on_connectors_loaded(
-        Ok(ConnectorsSnapshot {
-            connectors: vec![AppInfo {
-                id: "connector_1".to_string(),
-                name: "Notion".to_string(),
-                description: Some("Workspace docs".to_string()),
-                logo_url: None,
-                logo_url_dark: None,
-                distribution_channel: None,
-                branding: None,
-                app_metadata: None,
-                labels: None,
-                install_url: Some("https://example.test/notion".to_string()),
-                is_accessible: true,
-                is_enabled: true,
-                plugin_display_names: Vec::new(),
-            }],
-        }),
-        /*is_final*/ true,
-    );
-
-    assert_matches!(
-        &chat.connectors.cache,
-        ConnectorsCacheState::Ready(snapshot)
-            if snapshot
-                .connectors
-                .iter()
-                .find(|connector| connector.id == "connector_1")
-                .is_some_and(|connector| !connector.is_enabled)
-    );
-}
-
-#[tokio::test]
-async fn apps_initial_load_applies_enabled_state_from_requirements_with_user_override() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    set_chatgpt_auth(&mut chat);
-    chat.config
-        .features
-        .enable(Feature::Apps)
-        .expect("test config should allow feature update");
-    chat.bottom_pane.set_connectors_enabled(/*enabled*/ true);
-
-    let requirements = ConfigRequirementsToml {
-        apps: Some(AppsRequirementsToml {
-            apps: BTreeMap::from([(
-                "connector_1".to_string(),
-                AppRequirementToml {
-                    enabled: Some(false),
-                    tools: None,
-                },
-            )]),
-        }),
-        ..Default::default()
-    };
-    let temp = tempdir().expect("tempdir");
-    let config_toml_path = temp.path().join("config.toml").abs();
-    chat.config.config_layer_stack =
-        ConfigLayerStack::new(Vec::new(), ConfigRequirements::default(), requirements)
-            .expect("requirements stack")
-            .with_user_config(
-                &config_toml_path,
-                toml::from_str::<TomlValue>(
-                    "[apps.connector_1]\nenabled = true\ndisabled_reason = \"user\"\n",
-                )
-                .expect("apps config"),
-            );
-
-    chat.on_connectors_loaded(
-        Ok(ConnectorsSnapshot {
-            connectors: vec![AppInfo {
-                id: "connector_1".to_string(),
-                name: "Notion".to_string(),
-                description: Some("Workspace docs".to_string()),
-                logo_url: None,
-                logo_url_dark: None,
-                distribution_channel: None,
-                branding: None,
-                app_metadata: None,
-                labels: None,
-                install_url: Some("https://example.test/notion".to_string()),
-                is_accessible: true,
-                is_enabled: true,
-                plugin_display_names: Vec::new(),
-            }],
-        }),
-        /*is_final*/ true,
-    );
-
-    assert_matches!(
-        &chat.connectors.cache,
-        ConnectorsCacheState::Ready(snapshot)
-            if snapshot
-                .connectors
-                .iter()
-                .find(|connector| connector.id == "connector_1")
-                .is_some_and(|connector| !connector.is_enabled)
-    );
-
-    chat.add_connectors_output();
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(
-        popup.contains("Installed · Disabled. Press Enter to open the app page"),
-        "expected requirements-disabled connector to render as disabled, got:\n{popup}"
-    );
-}
-
-#[tokio::test]
-async fn apps_initial_load_applies_enabled_state_from_requirements_without_user_entry() {
-    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    set_chatgpt_auth(&mut chat);
-    chat.config
-        .features
-        .enable(Feature::Apps)
-        .expect("test config should allow feature update");
-    chat.bottom_pane.set_connectors_enabled(/*enabled*/ true);
-
-    let requirements = ConfigRequirementsToml {
-        apps: Some(AppsRequirementsToml {
-            apps: BTreeMap::from([(
-                "connector_1".to_string(),
-                AppRequirementToml {
-                    enabled: Some(false),
-                    tools: None,
-                },
-            )]),
-        }),
-        ..Default::default()
-    };
-    chat.config.config_layer_stack =
-        ConfigLayerStack::new(Vec::new(), ConfigRequirements::default(), requirements)
-            .expect("requirements stack");
-
-    chat.on_connectors_loaded(
-        Ok(ConnectorsSnapshot {
-            connectors: vec![AppInfo {
-                id: "connector_1".to_string(),
-                name: "Notion".to_string(),
-                description: Some("Workspace docs".to_string()),
-                logo_url: None,
-                logo_url_dark: None,
-                distribution_channel: None,
-                branding: None,
-                app_metadata: None,
-                labels: None,
-                install_url: Some("https://example.test/notion".to_string()),
-                is_accessible: true,
-                is_enabled: true,
-                plugin_display_names: Vec::new(),
-            }],
-        }),
-        /*is_final*/ true,
-    );
-
-    assert_matches!(
-        &chat.connectors.cache,
-        ConnectorsCacheState::Ready(snapshot)
-            if snapshot
-                .connectors
-                .iter()
-                .find(|connector| connector.id == "connector_1")
-                .is_some_and(|connector| !connector.is_enabled)
-    );
-
-    chat.add_connectors_output();
-    let popup = render_bottom_popup(&chat, /*width*/ 80);
-    assert!(
-        popup.contains("Installed · Disabled. Press Enter to open the app page"),
-        "expected requirements-disabled connector to render as disabled, got:\n{popup}"
-    );
-}
-
-#[tokio::test]
 async fn apps_refresh_preserves_toggled_enabled_state() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     set_chatgpt_auth(&mut chat);
@@ -2474,6 +2281,8 @@ async fn realtime_audio_picker_emits_persist_event() {
         vec!["Desk Speakers".to_string(), "Headphones".to_string()],
     );
 
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
     assert_matches!(
@@ -2502,6 +2311,7 @@ async fn model_picker_hides_show_in_picker_false_models_from_cache() {
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         is_default: false,
         upgrade: None,
         show_in_picker,
@@ -2547,6 +2357,7 @@ fn model_picker_test_preset(
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         is_default: false,
         upgrade: None,
         show_in_picker: true,
@@ -2720,6 +2531,7 @@ async fn github_copilot_model_picker_snapshot() {
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         is_default: slug == "claude-sonnet-4.5",
         upgrade: None,
         show_in_picker: true,
@@ -2952,6 +2764,7 @@ async fn single_reasoning_option_skips_selection() {
         supports_personality: false,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         is_default: false,
         upgrade: None,
         show_in_picker: true,

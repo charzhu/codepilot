@@ -121,7 +121,7 @@ fn build_raw(
         url: None,
         bearer_token: None,
         bearer_token_env_var: None,
-        experimental_environment: None,
+        environment_id: None,
         startup_timeout_sec: None,
         startup_timeout_ms: None,
         tool_timeout_sec: None,

@@ -23,43 +23,50 @@ if (platform !== "win32" || arch !== "x64") {
 
 const codepilotBinaryName = "codepilot.exe";
 const localVendorRoot = path.join(__dirname, "..", "vendor");
-const localBinaryPath = path.join(
-  localVendorRoot,
-  TARGET_TRIPLE,
-  "codex",
-  codepilotBinaryName,
-);
+const packageBinaryPath = (vendorRoot) =>
+  path.join(vendorRoot, TARGET_TRIPLE, "bin", codepilotBinaryName);
+const legacyBinaryPath = (vendorRoot) =>
+  path.join(vendorRoot, TARGET_TRIPLE, "codex", codepilotBinaryName);
 
-let vendorRoot;
-try {
-  const packageJsonPath = require.resolve(`${PLATFORM_PACKAGE}/package.json`);
-  vendorRoot = path.join(path.dirname(packageJsonPath), "vendor");
-} catch {
-  if (existsSync(localBinaryPath)) {
-    vendorRoot = localVendorRoot;
-  } else {
-    const updateCommand = installCommand();
-    throw new Error(
-      `Missing optional dependency ${PLATFORM_PACKAGE}. Reinstall Codepilot: ${updateCommand}`,
-    );
+function resolveNativePackage(vendorRoot) {
+  const packageRoot = path.join(vendorRoot, TARGET_TRIPLE);
+  const binaryPath = packageBinaryPath(vendorRoot);
+  if (existsSync(binaryPath)) {
+    return {
+      binaryPath,
+      pathDir: path.join(packageRoot, "codex-path"),
+    };
   }
+
+  const legacyPath = legacyBinaryPath(vendorRoot);
+  if (existsSync(legacyPath)) {
+    return {
+      binaryPath: legacyPath,
+      pathDir: path.join(packageRoot, "path"),
+    };
+  }
+
+  return null;
 }
 
-if (!vendorRoot) {
+let nativePackage;
+try {
+  const packageJsonPath = require.resolve(`${PLATFORM_PACKAGE}/package.json`);
+  nativePackage = resolveNativePackage(
+    path.join(path.dirname(packageJsonPath), "vendor"),
+  );
+} catch {
+  nativePackage = resolveNativePackage(localVendorRoot);
+}
+
+if (!nativePackage) {
   const updateCommand = installCommand();
   throw new Error(
     `Missing optional dependency ${PLATFORM_PACKAGE}. Reinstall Codepilot: ${updateCommand}`,
   );
 }
 
-const archRoot = path.join(vendorRoot, TARGET_TRIPLE);
-const binaryPath = path.join(archRoot, "codex", codepilotBinaryName);
-if (!existsSync(binaryPath)) {
-  const updateCommand = installCommand();
-  throw new Error(
-    `Missing codepilot.exe at ${binaryPath}. Reinstall Codepilot so the platform package postinstall step can create it: ${updateCommand}`,
-  );
-}
+const { binaryPath, pathDir } = nativePackage;
 
 function getUpdatedPath(newDirs) {
   const existingPath = process.env.PATH || "";
@@ -98,7 +105,6 @@ function installCommand() {
 }
 
 const additionalDirs = [];
-const pathDir = path.join(archRoot, "path");
 if (existsSync(pathDir)) {
   additionalDirs.push(pathDir);
 }

@@ -5,12 +5,10 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const packageRoot = path.resolve(__dirname, "..");
-const binaryDir = path.join(
-  packageRoot,
-  "vendor",
-  "x86_64-pc-windows-msvc",
-  "codex",
-);
+const targetRoot = path.join(packageRoot, "vendor", "x86_64-pc-windows-msvc");
+const binaryDir = existsSync(path.join(targetRoot, "bin", "codex.exe"))
+  ? path.join(targetRoot, "bin")
+  : path.join(targetRoot, "codex");
 const source = path.join(binaryDir, "codex.exe");
 const destination = path.join(binaryDir, "codepilot.exe");
 

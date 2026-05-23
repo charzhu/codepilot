@@ -3,6 +3,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ RESPONSES_API_PROXY_NPM_ROOT = REPO_ROOT / "codex-rs" / "responses-api-proxy" / 
 CODEX_SDK_ROOT = REPO_ROOT / "sdk" / "typescript"
 CODEPILOT_NPM_NAME = "@charzhu/codepilot"
 CODEPILOT_PLATFORM_POSTINSTALL = "copy-codepilot-exe.cjs"
+CODEX_PACKAGE_COMPONENT = "codex-package"
 
 CODEPILOT_PLATFORM_PACKAGES: dict[str, dict[str, str]] = {
     "codepilot-win32-x64": {
@@ -33,12 +35,7 @@ PACKAGE_EXPANSIONS: dict[str, list[str]] = {
 
 PACKAGE_NATIVE_COMPONENTS: dict[str, list[str]] = {
     "codepilot": [],
-    "codepilot-win32-x64": [
-        "codex",
-        "rg",
-        "codex-windows-sandbox-setup",
-        "codex-command-runner",
-    ],
+    "codepilot-win32-x64": [CODEX_PACKAGE_COMPONENT],
     "codex-responses-api-proxy": ["codex-responses-api-proxy"],
     "codex-sdk": [],
 }
@@ -49,17 +46,6 @@ PACKAGE_TARGET_FILTERS: dict[str, str] = {
 }
 
 PACKAGE_CHOICES = tuple(PACKAGE_NATIVE_COMPONENTS)
-
-COMPONENT_DEST_DIR: dict[str, str] = {
-    "bwrap": "codex-resources",
-    "codex": "codex",
-    "codepilot": "codex",
-    "codex-responses-api-proxy": "codex-responses-api-proxy",
-    "codex-windows-sandbox-setup": "codex",
-    "codex-command-runner": "codex",
-    "rg": "path",
-}
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build or stage the Codepilot CLI npm package.")
@@ -103,16 +89,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory containing pre-installed native binaries to bundle (vendor root).",
     )
-    parser.add_argument(
-        "--allow-missing-native-component",
-        dest="allow_missing_native_components",
-        action="append",
-        default=[],
-        help=(
-            "Native component that may be absent from --vendor-src. Intended for CI "
-            "compatibility with older artifact workflows; releases should not use this."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -153,7 +129,6 @@ def main() -> int:
                 staging_dir,
                 native_components,
                 target_filter={target_filter} if target_filter else None,
-                allow_missing_components=set(args.allow_missing_native_components),
             )
 
         if release_version:
@@ -219,9 +194,6 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         bin_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(CODEX_CLI_ROOT / "bin" / "codepilot.js", bin_dir / "codepilot.js")
         shutil.copy2(CODEX_CLI_ROOT / "bin" / "codex.js", bin_dir / "codex.js")
-        rg_manifest = CODEX_CLI_ROOT / "bin" / "rg"
-        if rg_manifest.exists():
-            shutil.copy2(rg_manifest, bin_dir / "rg")
 
         write_codepilot_readme(staging_dir)
 
@@ -285,7 +257,7 @@ def stage_sources(staging_dir: Path, version: str, package: str) -> None:
         package_json["version"] = version
 
     if package == "codepilot":
-        package_json["files"] = ["bin/codepilot.js", "bin/codex.js", "bin/rg"]
+        package_json["files"] = ["bin/codepilot.js", "bin/codex.js"]
         package_json["optionalDependencies"] = {
             CODEPILOT_PLATFORM_PACKAGES[platform_package]["npm_name"]: version
             for platform_package in PACKAGE_EXPANSIONS["codepilot"]
@@ -327,7 +299,7 @@ def write_codepilot_readme(staging_dir: Path) -> None:
 
 
 def run_command(cmd: list[str], cwd: Path | None = None) -> None:
-    print("+", " ".join(cmd))
+    print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=cwd, check=True)
 
 
@@ -357,14 +329,12 @@ def copy_native_binaries(
     staging_dir: Path,
     components: list[str],
     target_filter: set[str] | None = None,
-    allow_missing_components: set[str] | None = None,
 ) -> None:
     vendor_src = vendor_src.resolve()
     if not vendor_src.exists():
         raise RuntimeError(f"Vendor source directory not found: {vendor_src}")
 
-    components_set = {component for component in components if component in COMPONENT_DEST_DIR}
-    allow_missing_components = allow_missing_components or set()
+    components_set = set(components)
     if not components_set:
         return
 
@@ -382,24 +352,25 @@ def copy_native_binaries(
         if target_filter is not None and target_dir.name not in target_filter:
             continue
 
-        dest_target_dir = vendor_dest / target_dir.name
-        dest_target_dir.mkdir(parents=True, exist_ok=True)
         copied_targets.add(target_dir.name)
 
-        for component in components_set:
-            dest_dir_name = COMPONENT_DEST_DIR.get(component)
-            if dest_dir_name is None:
-                continue
+        dest_target_dir = vendor_dest / target_dir.name
 
-            src_component_dir = target_dir / dest_dir_name
+        if CODEX_PACKAGE_COMPONENT in components_set:
+            if dest_target_dir.exists():
+                shutil.rmtree(dest_target_dir)
+            shutil.copytree(target_dir, dest_target_dir)
+        else:
+            dest_target_dir.mkdir(parents=True, exist_ok=True)
+
+        for component in sorted(components_set - {CODEX_PACKAGE_COMPONENT}):
+            src_component_dir = target_dir / component
             if not src_component_dir.exists():
-                if component in allow_missing_components:
-                    continue
                 raise RuntimeError(
                     f"Missing native component '{component}' in vendor source: {src_component_dir}"
                 )
 
-            dest_component_dir = dest_target_dir / dest_dir_name
+            dest_component_dir = dest_target_dir / component
             if dest_component_dir.exists():
                 shutil.rmtree(dest_component_dir)
             shutil.copytree(src_component_dir, dest_component_dir)
@@ -410,16 +381,23 @@ def copy_native_binaries(
             missing_list = ", ".join(missing_targets)
             raise RuntimeError(f"Missing target directories in vendor source: {missing_list}")
 
-
 def run_npm_pack(staging_dir: Path, output_path: Path) -> Path:
     output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="codepilot-npm-pack-") as pack_dir_str:
         pack_dir = Path(pack_dir_str)
+        npm_cache_dir = pack_dir / "npm-cache"
+        npm_logs_dir = pack_dir / "npm-logs"
+        npm_cache_dir.mkdir()
+        npm_logs_dir.mkdir()
+        env = os.environ.copy()
+        env["NPM_CONFIG_CACHE"] = str(npm_cache_dir)
+        env["NPM_CONFIG_LOGS_DIR"] = str(npm_logs_dir)
         stdout = subprocess.check_output(
             [npm_executable(), "pack", "--json", "--pack-destination", str(pack_dir)],
             cwd=staging_dir,
+            env=env,
             text=True,
         )
         try:

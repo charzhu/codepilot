@@ -423,7 +423,6 @@
           ]
         },
         "includeLayers": {
-          "default": false,
           "type": "boolean"
         }
       },
@@ -721,8 +720,7 @@
         }
       },
       "required": [
-        "classification",
-        "includeLogs"
+        "classification"
       ],
       "type": "object"
     },
@@ -984,6 +982,26 @@
           ],
           "title": "InputImageFunctionCallOutputContentItem",
           "type": "object"
+        },
+        {
+          "properties": {
+            "encrypted_content": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "encrypted_content"
+              ],
+              "title": "EncryptedContentFunctionCallOutputContentItemType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "encrypted_content",
+            "type"
+          ],
+          "title": "EncryptedContentFunctionCallOutputContentItem",
+          "type": "object"
         }
       ]
     },
@@ -1014,7 +1032,6 @@
     "GetAccountParams": {
       "properties": {
         "refreshToken": {
-          "default": false,
           "description": "When `true`, requests a proactive token refresh before returning.\n\nIn managed auth mode this triggers the normal refresh-token flow. In external auth mode this flag is ignored. Clients should refresh tokens themselves and call `account/login/start` with `chatgptAuthTokens`.",
           "type": "boolean"
         }
@@ -1557,6 +1574,34 @@
       ],
       "type": "string"
     },
+    "PermissionProfileListParams": {
+      "properties": {
+        "cursor": {
+          "description": "Opaque pagination cursor returned by a previous call.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "description": "Optional working directory to resolve project config layers.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Optional page size; defaults to the full result set.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Personality": {
       "enum": [
         "none",
@@ -1620,6 +1665,7 @@
     "PluginListMarketplaceKind": {
       "enum": [
         "local",
+        "vertical",
         "workspace-directory",
         "shared-with-me"
       ],
@@ -3023,7 +3069,7 @@
       "type": "object"
     },
     "ThreadForkParams": {
-      "description": "There are two ways to fork a thread: 1. By thread_id: load the thread from disk by thread_id and fork it into a new thread. 2. By path: load the thread from disk by path and fork it into a new thread.\n\nIf using path, the thread_id param will be ignored.\n\nPrefer using thread_id whenever possible.",
+      "description": "There are two ways to fork a thread: 1. By thread_id: load the thread from disk by thread_id and fork it into a new thread. 2. By path: load the thread from disk by path and fork it into a new thread.\n\nIf using a non-empty path, the thread_id param will be ignored. Empty string path values are treated as absent.\n\nPrefer using thread_id whenever possible.",
       "properties": {
         "approvalPolicy": {
           "anyOf": [
@@ -3116,6 +3162,62 @@
             }
           ],
           "description": "Optional client-supplied analytics source classification for this forked thread."
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalClearParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalGetParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "ThreadGoalSetParams": {
+      "properties": {
+        "objective": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ThreadGoalStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tokenBudget": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -3335,7 +3437,6 @@
     "ThreadReadParams": {
       "properties": {
         "includeTurns": {
-          "default": false,
           "description": "When true, include turns and their items from rollout history.",
           "type": "boolean"
         },
@@ -3429,7 +3530,7 @@
       ]
     },
     "ThreadResumeParams": {
-      "description": "There are three ways to resume a thread: 1. By thread_id: load the thread from disk by thread_id and resume it. 2. By history: instantiate the thread from memory and resume it. 3. By path: load the thread from disk by path and resume it.\n\nThe precedence is: history > path > thread_id. If using history or path, the thread_id param will be ignored.\n\nPrefer using thread_id whenever possible.",
+      "description": "There are three ways to resume a thread: 1. By thread_id: load the thread from disk by thread_id and resume it. 2. By history: instantiate the thread from memory and resume it. 3. By path: load the thread from disk by path and resume it.\n\nFor non-running threads, the precedence is: history > non-empty path > thread_id. If using history or a non-empty path for a non-running thread, the thread_id param will be ignored.\n\nIf thread_id identifies a running thread, app-server rejoins that thread and treats a non-empty path as a consistency check against the active rollout path. Empty string path values are treated as absent.\n\nPrefer using thread_id whenever possible.",
       "properties": {
         "approvalPolicy": {
           "anyOf": [
@@ -4281,6 +4382,78 @@
         "params"
       ],
       "title": "Thread/name/setRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/goal/set"
+          ],
+          "title": "Thread/goal/setRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadGoalSetParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/goal/setRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/goal/get"
+          ],
+          "title": "Thread/goal/getRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadGoalGetParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/goal/getRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/goal/clear"
+          ],
+          "title": "Thread/goal/clearRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadGoalClearParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/goal/clearRequest",
       "type": "object"
     },
     {
@@ -5338,6 +5511,30 @@
         "params"
       ],
       "title": "ExperimentalFeature/listRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "permissionProfile/list"
+          ],
+          "title": "PermissionProfile/listRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/PermissionProfileListParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "PermissionProfile/listRequest",
       "type": "object"
     },
     {

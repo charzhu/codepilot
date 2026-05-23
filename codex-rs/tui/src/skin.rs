@@ -49,6 +49,7 @@ const DEFAULT_SKIN_ENTRY: SkinEntry = SkinEntry {
     is_default: true,
 };
 
+#[allow(clippy::disallowed_methods)]
 const fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::Rgb(r, g, b)
 }
@@ -430,7 +431,7 @@ pub(crate) fn paint_background(area: Rect, buf: &mut Buffer) {
 }
 
 pub(crate) fn user_message_style() -> Option<Style> {
-    current_skin().map(|skin| surface_style_for(skin))
+    current_skin().map(surface_style_for)
 }
 
 pub(crate) fn accent_style() -> Option<Style> {

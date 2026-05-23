@@ -120,7 +120,7 @@ fn build_server(agency_exe: &str, name: &str, value: &toml::Value) -> Option<Mcp
             env_vars: Vec::new(),
             cwd: None,
         },
-        experimental_environment: None,
+        environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
         enabled: true,
         required: false,
         supports_parallel_tool_calls: false,

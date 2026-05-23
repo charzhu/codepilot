@@ -475,6 +475,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
@@ -534,22 +535,14 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         .await;
     assert_eq!(model_info.shell_type, ConfigShellToolType::UnifiedExec);
 
-    codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
-            approval_policy: None,
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
+    core_test_support::submit_thread_settings(
+        &codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some(REMOTE_MODEL_SLUG.to_string()),
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let call_id = "call";
     let args = json!({
@@ -730,6 +723,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         upgrade: None,
         base_instructions: remote_base.to_string(),
         model_messages: None,
@@ -783,22 +777,14 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
     let models_manager = thread_manager.get_models_manager();
     wait_for_model_available(&models_manager, model).await;
 
-    codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
-            approval_policy: None,
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
+    core_test_support::submit_thread_settings(
+        &codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some(model.to_string()),
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     let cwd_path = cwd.path().to_path_buf();
     let (sandbox_policy, permission_profile) =
@@ -1219,6 +1205,7 @@ fn test_remote_model_with_policy(
         priority,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,

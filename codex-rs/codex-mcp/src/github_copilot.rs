@@ -87,7 +87,7 @@ pub fn github_copilot_mcp_server_config() -> McpServerConfig {
             http_headers: Some(github_copilot_mcp_http_headers()),
             env_http_headers: None,
         },
-        experimental_environment: None,
+        environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
         enabled: true,
         required: false,
         supports_parallel_tool_calls: false,

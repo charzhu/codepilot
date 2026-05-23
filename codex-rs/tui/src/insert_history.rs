@@ -437,6 +437,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)]
     fn history_fallback_style_fills_missing_colors_without_overriding_content() {
         let fallback = Style::default()
             .fg(Color::Rgb(1, 2, 3))

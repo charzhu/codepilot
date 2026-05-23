@@ -7,7 +7,6 @@
 
 mod apply_patch;
 mod apps;
-mod arc_monitor;
 mod chat_completions;
 mod client;
 mod client_common;
