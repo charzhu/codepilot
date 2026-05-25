@@ -388,20 +388,17 @@ impl CopilotModel {
 fn is_openai_copilot_vendor(vendor: &str) -> bool {
     matches!(
         normalize_copilot_vendor(vendor).as_deref(),
-        Some("openai" | "open-ai")
+        Some("openai" | "open-ai" | "azureopenai" | "azure-openai" | "azure-open-ai")
     )
 }
 
 fn non_openai_vendor_from_model_id(model_id: &str) -> Option<String> {
     let family = model_family_from_id(model_id)?;
-    if is_openai_model_family(&family) {
-        None
-    } else {
-        Some(match family.as_str() {
-            "claude" => "Anthropic".to_string(),
-            "gemini" => "Google".to_string(),
-            _ => family,
-        })
+    match family.as_str() {
+        "claude" => Some("Anthropic".to_string()),
+        "gemini" => Some("Google".to_string()),
+        "mistral" => Some("mistral".to_string()),
+        _ => None,
     }
 }
 
@@ -413,19 +410,6 @@ fn model_family_from_id(model_id: &str) -> Option<String> {
         .unwrap_or(normalized.as_str());
     let family = model.split('-').next()?;
     (!family.is_empty()).then(|| family.to_string())
-}
-
-fn is_openai_model_family(family: &str) -> bool {
-    if matches!(
-        family,
-        "chatgpt" | "codex" | "computer" | "dall" | "gpt" | "openai" | "text"
-    ) || family.starts_with("gpt")
-    {
-        return true;
-    }
-
-    let mut chars = family.chars();
-    matches!(chars.next(), Some('o')) && chars.next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 fn copilot_metadata_markers(vendor: Option<&str>, supports_web_search: bool) -> Vec<String> {
@@ -887,6 +871,35 @@ mod tests {
     }
 
     #[test]
+    fn maps_azure_openai_vendor_as_openai_family() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "lark-picker-secondary",
+            "name": "Lark",
+            "vendor": "Azure OpenAI",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"web_search_disabled": true}
+            }
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(
+            info.experimental_supported_tools,
+            vec!["github_copilot_vendor:azure-openai".to_string()]
+        );
+        assert_eq!(
+            info.description.as_deref(),
+            Some("Lark via GitHub Copilot (Azure OpenAI)")
+        );
+    }
+
+    #[test]
     fn infers_non_openai_vendor_from_model_family_when_metadata_is_generic() {
         for (id, expected_vendor, expected_marker) in [
             (
@@ -924,6 +937,34 @@ mod tests {
                 Some(format!("{id} via GitHub Copilot ({expected_vendor})").as_str())
             );
         }
+    }
+
+    #[test]
+    fn does_not_infer_unknown_vendor_from_model_family_when_metadata_is_openai() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "lark-picker-secondary",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"web_search_disabled": true}
+            }
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(
+            info.experimental_supported_tools,
+            vec!["github_copilot_vendor:openai".to_string()]
+        );
+        assert_eq!(
+            info.description.as_deref(),
+            Some("lark-picker-secondary via GitHub Copilot (OpenAI)")
+        );
     }
 
     #[test]
