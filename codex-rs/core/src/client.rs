@@ -420,9 +420,9 @@ impl ModelClient {
     pub(crate) fn force_http_fallback(
         &self,
         session_telemetry: &SessionTelemetry,
-        _model_info: &ModelInfo,
+        model_info: &ModelInfo,
     ) -> bool {
-        let websocket_enabled = self.responses_websocket_enabled();
+        let websocket_enabled = self.responses_websocket_enabled(model_info);
         let activated =
             websocket_enabled && !self.state.disable_websockets.swap(true, Ordering::Relaxed);
         if activated {
@@ -802,27 +802,24 @@ impl ModelClient {
             };
         }
 
-        match copilot_model_vendor(model_info).as_deref() {
-            Some(vendor) if is_openai_copilot_vendor(vendor) => Ok(EffectiveWireApi::Responses),
-            Some(_) => Ok(EffectiveWireApi::ChatCompletions),
-            None => Err(CodexErr::InvalidRequest(format!(
-                "GitHub Copilot model `{}` is missing vendor metadata; refresh models and try again",
-                model_info.slug
-            ))),
+        match copilot_wire_api_hint(model_info) {
+            Some(EffectiveWireApi::Responses) => Ok(EffectiveWireApi::Responses),
+            Some(EffectiveWireApi::ChatCompletions) | None => Ok(EffectiveWireApi::ChatCompletions),
         }
     }
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
     ///
     /// WebSocket use is controlled by provider capability and session-scoped fallback state.
-    pub fn responses_websocket_enabled(&self) -> bool {
+    pub fn responses_websocket_enabled(&self, model_info: &ModelInfo) -> bool {
         if !self.state.provider.info().supports_websockets
             || self.state.disable_websockets.load(Ordering::Relaxed)
         {
             return false;
         }
 
-        true
+        !self.state.provider.info().is_github_copilot()
+            || copilot_supports_responses_websocket(model_info)
     }
 
     /// Returns auth + provider configuration resolved from the current session auth state.
@@ -1147,9 +1144,9 @@ impl ModelClientSession {
     pub async fn preconnect_websocket(
         &mut self,
         session_telemetry: &SessionTelemetry,
-        _model_info: &ModelInfo,
+        model_info: &ModelInfo,
     ) -> std::result::Result<(), ApiError> {
-        if !self.client.responses_websocket_enabled() {
+        if !self.client.responses_websocket_enabled(model_info) {
             return Ok(());
         }
         if self.websocket_session.connection.is_some() {
@@ -1685,7 +1682,7 @@ impl ModelClientSession {
         service_tier: Option<String>,
         turn_metadata_header: Option<&str>,
     ) -> Result<()> {
-        if !self.client.responses_websocket_enabled() {
+        if !self.client.responses_websocket_enabled(model_info) {
             return Ok(());
         }
         if self.websocket_session.last_request.is_some() {
@@ -1750,7 +1747,7 @@ impl ModelClientSession {
         let wire_api = self.client.effective_wire_api(model_info)?;
         match wire_api {
             EffectiveWireApi::Responses => {
-                if self.client.responses_websocket_enabled() {
+                if self.client.responses_websocket_enabled(model_info) {
                     let request_trace = current_span_w3c_trace_context();
                     match self
                         .stream_responses_websocket(
@@ -1981,65 +1978,24 @@ fn restore_chat_tool_names(event: ResponseEvent, tool_names: &ChatToolNameMap) -
     }
 }
 
-fn copilot_model_vendor(model_info: &ModelInfo) -> Option<String> {
-    let metadata_vendor = model_info
+fn copilot_wire_api_hint(model_info: &ModelInfo) -> Option<EffectiveWireApi> {
+    model_info
         .experimental_supported_tools
         .iter()
-        .find_map(|tool| tool.strip_prefix("github_copilot_vendor:"))
+        .find_map(|tool| tool.strip_prefix("github_copilot_wire_api:"))
         .map(str::trim)
-        .filter(|vendor| !vendor.is_empty())
-        .map(normalize_copilot_vendor)
-        .or_else(|| {
-            let description = model_info.description.as_deref()?;
-            let (_, vendor) = description.rsplit_once("via GitHub Copilot (")?;
-            vendor
-                .strip_suffix(')')
-                .map(str::trim)
-                .filter(|vendor| !vendor.is_empty())
-                .map(normalize_copilot_vendor)
-        });
-
-    if metadata_vendor
-        .as_deref()
-        .map(is_openai_copilot_vendor)
-        .unwrap_or(true)
-        && let Some(vendor) = non_openai_copilot_vendor_from_slug(&model_info.slug)
-    {
-        return Some(vendor);
-    }
-
-    metadata_vendor
+        .and_then(|wire_api| match wire_api {
+            "responses" => Some(EffectiveWireApi::Responses),
+            "chat-completions" => Some(EffectiveWireApi::ChatCompletions),
+            _ => None,
+        })
 }
 
-fn normalize_copilot_vendor(vendor: &str) -> String {
-    vendor.trim().to_ascii_lowercase().replace([' ', '_'], "-")
-}
-
-fn is_openai_copilot_vendor(vendor: &str) -> bool {
-    matches!(
-        normalize_copilot_vendor(vendor).as_str(),
-        "openai" | "open-ai" | "azureopenai" | "azure-openai" | "azure-open-ai"
-    )
-}
-
-fn non_openai_copilot_vendor_from_slug(slug: &str) -> Option<String> {
-    let family = copilot_model_family_from_slug(slug)?;
-    match family.as_str() {
-        "claude" => Some("anthropic".to_string()),
-        "gemini" => Some("google".to_string()),
-        "mistral" => Some("mistral".to_string()),
-        _ => None,
-    }
-}
-
-fn copilot_model_family_from_slug(slug: &str) -> Option<String> {
-    let normalized = slug.trim().to_ascii_lowercase().replace('_', "-");
-    let model = normalized
-        .rsplit(['/', ':'])
-        .next()
-        .unwrap_or(normalized.as_str());
-    let family = model.split('-').next()?;
-    (!family.is_empty()).then(|| family.to_string())
+fn copilot_supports_responses_websocket(model_info: &ModelInfo) -> bool {
+    model_info
+        .experimental_supported_tools
+        .iter()
+        .any(|tool| tool == "github_copilot_responses_websocket")
 }
 
 fn map_response_events<S>(

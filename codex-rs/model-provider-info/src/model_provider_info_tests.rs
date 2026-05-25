@@ -312,7 +312,10 @@ fn test_built_in_model_providers_include_github_copilot() {
 
 #[test]
 fn test_github_copilot_provider_adds_required_headers() {
-    let api_provider = ModelProviderInfo::create_github_copilot_provider()
+    let provider = ModelProviderInfo::create_github_copilot_provider();
+    assert!(provider.supports_websockets);
+
+    let api_provider = provider
         .to_api_provider(/*auth_mode*/ None)
         .expect("GitHub Copilot provider should build API provider");
 

@@ -152,69 +152,69 @@ fn test_session_telemetry() -> SessionTelemetry {
 }
 
 #[test]
-fn copilot_openai_vendor_uses_responses_transport() {
+fn copilot_responses_wire_api_marker_uses_responses_transport() {
     let client = test_github_copilot_client();
+    let mut model = test_copilot_model_info("Azure OpenAI");
+    model.slug = "lark-picker-secondary".to_string();
+    model.experimental_supported_tools = vec![
+        "github_copilot_vendor:azure-openai".to_string(),
+        "github_copilot_wire_api:responses".to_string(),
+    ];
 
-    for vendor in ["openai", "Azure OpenAI", "azure_openai", "azure-open-ai"] {
-        let model = test_copilot_model_info(vendor);
-
-        assert!(
-            matches!(
-                client.effective_wire_api(&model),
-                Ok(EffectiveWireApi::Responses)
-            ),
-            "expected {vendor} to use responses"
-        );
-    }
+    assert!(matches!(
+        client.effective_wire_api(&model),
+        Ok(EffectiveWireApi::Responses)
+    ));
 }
 
 #[test]
-fn copilot_openai_slugs_use_responses_transport() {
+fn copilot_websocket_enabled_requires_model_marker() {
     let client = test_github_copilot_client();
+    let mut model = test_copilot_model_info("OpenAI");
+    model.slug = "gpt-5.5".to_string();
+    model.experimental_supported_tools = vec![
+        "github_copilot_vendor:openai".to_string(),
+        "github_copilot_wire_api:responses".to_string(),
+        "github_copilot_responses_websocket".to_string(),
+    ];
 
-    for slug in ["gpt-5.4", "o3-mini", "chatgpt-4o-latest"] {
-        let mut model = test_copilot_model_info("openai");
-        model.slug = slug.to_string();
+    assert!(client.responses_websocket_enabled(&model));
 
-        assert!(
-            matches!(
-                client.effective_wire_api(&model),
-                Ok(EffectiveWireApi::Responses)
-            ),
-            "expected {slug} to use responses"
-        );
-    }
+    model
+        .experimental_supported_tools
+        .retain(|tool| tool != "github_copilot_responses_websocket");
+    assert!(!client.responses_websocket_enabled(&model));
 }
 
 #[test]
-fn copilot_non_openai_vendors_use_chat_completions_transport() {
+fn copilot_chat_completions_wire_api_marker_uses_chat_completions_transport() {
     let client = test_github_copilot_client();
+    let mut model = test_copilot_model_info("Anthropic");
+    model.slug = "claude-sonnet-4.5".to_string();
+    model.experimental_supported_tools = vec![
+        "github_copilot_vendor:anthropic".to_string(),
+        "github_copilot_wire_api:chat-completions".to_string(),
+    ];
 
-    for vendor in ["anthropic", "google", "gemini", "mistral", "xai", "meta"] {
-        let model = test_copilot_model_info(vendor);
-        assert!(
-            matches!(
-                client.effective_wire_api(&model),
-                Ok(EffectiveWireApi::ChatCompletions)
-            ),
-            "expected {vendor} to use chat completions"
-        );
-    }
+    assert!(matches!(
+        client.effective_wire_api(&model),
+        Ok(EffectiveWireApi::ChatCompletions)
+    ));
 }
 
 #[test]
-fn copilot_known_non_openai_slugs_override_generic_openai_metadata() {
+fn copilot_missing_wire_api_marker_falls_back_to_chat_completions_transport() {
     let client = test_github_copilot_client();
 
-    for slug in [
-        "gemini-3.1-pro-preview",
-        "claude-sonnet-4.5",
-        "mistral-large-latest",
+    for (slug, vendor) in [
+        ("gpt-4.1", "Azure OpenAI"),
+        ("gemini-2.5-pro", "Google"),
+        ("lark-picker-secondary", "Azure OpenAI"),
     ] {
-        let mut model = test_copilot_model_info("openai");
+        let mut model = test_copilot_model_info(vendor);
         model.slug = slug.to_string();
-        model.display_name = slug.to_string();
-        model.description = Some(format!("{slug} via GitHub Copilot (OpenAI)"));
+        model.description = Some(format!("{slug} via GitHub Copilot ({vendor})"));
+        model.experimental_supported_tools = vec![format!("github_copilot_vendor:{vendor}")];
 
         assert!(
             matches!(
@@ -224,52 +224,6 @@ fn copilot_known_non_openai_slugs_override_generic_openai_metadata() {
             "expected {slug} to use chat completions"
         );
     }
-}
-
-#[test]
-fn copilot_unknown_slugs_keep_openai_family_metadata() {
-    let client = test_github_copilot_client();
-
-    for vendor in ["OpenAI", "Azure OpenAI"] {
-        let mut model = test_copilot_model_info(vendor);
-        model.slug = "lark-picker-secondary".to_string();
-        model.display_name = "Lark".to_string();
-        model.description = Some(format!("Lark via GitHub Copilot ({vendor})"));
-
-        assert!(
-            matches!(
-                client.effective_wire_api(&model),
-                Ok(EffectiveWireApi::Responses)
-            ),
-            "expected {vendor} metadata to keep lark-picker-secondary on responses"
-        );
-    }
-}
-
-#[test]
-fn copilot_vendor_can_be_read_from_existing_description_cache() {
-    let client = test_github_copilot_client();
-    let mut model = test_model_info();
-    model.description = Some("Gemini via GitHub Copilot (Google)".to_string());
-
-    assert!(matches!(
-        client.effective_wire_api(&model),
-        Ok(EffectiveWireApi::ChatCompletions)
-    ));
-}
-
-#[test]
-fn copilot_openai_family_missing_vendor_fails_closed() {
-    let client = test_github_copilot_client();
-    let model = test_model_info();
-
-    let err = client
-        .effective_wire_api(&model)
-        .expect_err("missing vendor should fail");
-    assert!(
-        err.to_string().contains("missing vendor metadata"),
-        "unexpected error: {err}"
-    );
 }
 
 #[test]
