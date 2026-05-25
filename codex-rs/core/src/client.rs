@@ -2018,16 +2018,17 @@ fn normalize_copilot_vendor(vendor: &str) -> String {
 fn is_openai_copilot_vendor(vendor: &str) -> bool {
     matches!(
         normalize_copilot_vendor(vendor).as_str(),
-        "openai" | "open-ai"
+        "openai" | "open-ai" | "azureopenai" | "azure-openai" | "azure-open-ai"
     )
 }
 
 fn non_openai_copilot_vendor_from_slug(slug: &str) -> Option<String> {
     let family = copilot_model_family_from_slug(slug)?;
-    if is_openai_model_family(&family) {
-        None
-    } else {
-        Some(family)
+    match family.as_str() {
+        "claude" => Some("anthropic".to_string()),
+        "gemini" => Some("google".to_string()),
+        "mistral" => Some("mistral".to_string()),
+        _ => None,
     }
 }
 
@@ -2039,19 +2040,6 @@ fn copilot_model_family_from_slug(slug: &str) -> Option<String> {
         .unwrap_or(normalized.as_str());
     let family = model.split('-').next()?;
     (!family.is_empty()).then(|| family.to_string())
-}
-
-fn is_openai_model_family(family: &str) -> bool {
-    if matches!(
-        family,
-        "chatgpt" | "codex" | "computer" | "dall" | "gpt" | "openai" | "text"
-    ) || family.starts_with("gpt")
-    {
-        return true;
-    }
-
-    let mut chars = family.chars();
-    matches!(chars.next(), Some('o')) && chars.next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 fn map_response_events<S>(

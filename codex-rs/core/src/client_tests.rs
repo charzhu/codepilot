@@ -154,12 +154,18 @@ fn test_session_telemetry() -> SessionTelemetry {
 #[test]
 fn copilot_openai_vendor_uses_responses_transport() {
     let client = test_github_copilot_client();
-    let model = test_copilot_model_info("openai");
 
-    assert!(matches!(
-        client.effective_wire_api(&model),
-        Ok(EffectiveWireApi::Responses)
-    ));
+    for vendor in ["openai", "Azure OpenAI", "azure_openai", "azure-open-ai"] {
+        let model = test_copilot_model_info(vendor);
+
+        assert!(
+            matches!(
+                client.effective_wire_api(&model),
+                Ok(EffectiveWireApi::Responses)
+            ),
+            "expected {vendor} to use responses"
+        );
+    }
 }
 
 #[test]
@@ -197,15 +203,13 @@ fn copilot_non_openai_vendors_use_chat_completions_transport() {
 }
 
 #[test]
-fn copilot_non_openai_slugs_override_generic_openai_metadata() {
+fn copilot_known_non_openai_slugs_override_generic_openai_metadata() {
     let client = test_github_copilot_client();
 
     for slug in [
         "gemini-3.1-pro-preview",
         "claude-sonnet-4.5",
         "mistral-large-latest",
-        "xai/grok-4",
-        "meta/llama-3.3-70b",
     ] {
         let mut model = test_copilot_model_info("openai");
         model.slug = slug.to_string();
@@ -218,6 +222,26 @@ fn copilot_non_openai_slugs_override_generic_openai_metadata() {
                 Ok(EffectiveWireApi::ChatCompletions)
             ),
             "expected {slug} to use chat completions"
+        );
+    }
+}
+
+#[test]
+fn copilot_unknown_slugs_keep_openai_family_metadata() {
+    let client = test_github_copilot_client();
+
+    for vendor in ["OpenAI", "Azure OpenAI"] {
+        let mut model = test_copilot_model_info(vendor);
+        model.slug = "lark-picker-secondary".to_string();
+        model.display_name = "Lark".to_string();
+        model.description = Some(format!("Lark via GitHub Copilot ({vendor})"));
+
+        assert!(
+            matches!(
+                client.effective_wire_api(&model),
+                Ok(EffectiveWireApi::Responses)
+            ),
+            "expected {vendor} metadata to keep lark-picker-secondary on responses"
         );
     }
 }
