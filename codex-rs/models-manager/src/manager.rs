@@ -23,7 +23,7 @@ use tracing::info;
 
 const MODEL_CACHE_FILE: &str = "models_cache.json";
 const DEFAULT_MODEL_CACHE_TTL: Duration = Duration::from_secs(300);
-const MODEL_CACHE_SCHEMA_VERSION: u32 = 2;
+const MODEL_CACHE_SCHEMA_VERSION: u32 = 3;
 
 /// Remote endpoint used by the OpenAI-compatible model manager.
 ///

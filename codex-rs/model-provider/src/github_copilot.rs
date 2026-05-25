@@ -296,6 +296,14 @@ struct CopilotModel {
     policy: Option<Value>,
     #[serde(default)]
     capabilities: Option<Value>,
+    #[serde(default)]
+    supported_endpoints: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CopilotWireApiHint {
+    Responses,
+    ChatCompletions,
 }
 
 impl CopilotModel {
@@ -329,8 +337,16 @@ impl CopilotModel {
         info.supports_reasoning_summaries = false;
         info.apply_patch_tool_type = None;
         let supports_web_search = supports_web_search(self.capabilities.as_ref());
-        info.experimental_supported_tools =
-            copilot_metadata_markers(vendor.as_deref(), supports_web_search);
+        let supported_endpoints = self.supported_endpoints.as_deref();
+        let wire_api_hint = copilot_wire_api_hint_from_supported_endpoints(supported_endpoints);
+        let supports_responses_websocket = wire_api_hint == Some(CopilotWireApiHint::Responses)
+            && copilot_supports_responses_websocket(supported_endpoints);
+        info.experimental_supported_tools = copilot_metadata_markers(
+            vendor.as_deref(),
+            supports_web_search,
+            wire_api_hint,
+            supports_responses_websocket,
+        );
         info.web_search_tool_type = WebSearchToolType::Text;
         info.supports_parallel_tool_calls = capability_bool(
             self.capabilities.as_ref(),
@@ -412,15 +428,56 @@ fn model_family_from_id(model_id: &str) -> Option<String> {
     (!family.is_empty()).then(|| family.to_string())
 }
 
-fn copilot_metadata_markers(vendor: Option<&str>, supports_web_search: bool) -> Vec<String> {
+fn copilot_metadata_markers(
+    vendor: Option<&str>,
+    supports_web_search: bool,
+    wire_api_hint: Option<CopilotWireApiHint>,
+    supports_responses_websocket: bool,
+) -> Vec<String> {
     let mut markers = Vec::new();
     if let Some(vendor) = vendor.and_then(normalize_copilot_vendor) {
         markers.push(format!("github_copilot_vendor:{vendor}"));
     }
+    match wire_api_hint {
+        Some(CopilotWireApiHint::Responses) => {
+            markers.push("github_copilot_wire_api:responses".to_string());
+        }
+        Some(CopilotWireApiHint::ChatCompletions) => {
+            markers.push("github_copilot_wire_api:chat-completions".to_string());
+        }
+        None => {}
+    }
     if supports_web_search {
         markers.push("github_copilot_web_search".to_string());
     }
+    if supports_responses_websocket {
+        markers.push("github_copilot_responses_websocket".to_string());
+    }
     markers
+}
+
+fn copilot_wire_api_hint_from_supported_endpoints(
+    supported_endpoints: Option<&[String]>,
+) -> Option<CopilotWireApiHint> {
+    let supported_endpoints = supported_endpoints?;
+    if supported_endpoints.is_empty() {
+        return None;
+    }
+    if supported_endpoints
+        .iter()
+        .any(|endpoint| matches!(endpoint.trim().to_ascii_lowercase().as_str(), "/responses"))
+    {
+        return Some(CopilotWireApiHint::Responses);
+    }
+    Some(CopilotWireApiHint::ChatCompletions)
+}
+
+fn copilot_supports_responses_websocket(supported_endpoints: Option<&[String]>) -> bool {
+    supported_endpoints.is_some_and(|supported_endpoints| {
+        supported_endpoints
+            .iter()
+            .any(|endpoint| endpoint.trim().eq_ignore_ascii_case("ws:/responses"))
+    })
 }
 
 fn normalize_copilot_vendor(vendor: &str) -> Option<String> {
@@ -871,11 +928,128 @@ mod tests {
     }
 
     #[test]
-    fn maps_azure_openai_vendor_as_openai_family() {
+    fn maps_responses_supported_endpoint_to_wire_api_markers() {
         let model: CopilotModel = serde_json::from_value(json!({
             "id": "lark-picker-secondary",
             "name": "Lark",
             "vendor": "Azure OpenAI",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"web_search_disabled": true}
+            },
+            "supported_endpoints": ["/responses", "ws:/responses"]
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(
+            info.experimental_supported_tools,
+            vec![
+                "github_copilot_vendor:azure-openai".to_string(),
+                "github_copilot_wire_api:responses".to_string(),
+                "github_copilot_responses_websocket".to_string(),
+            ]
+        );
+        assert_eq!(
+            info.description.as_deref(),
+            Some("Lark via GitHub Copilot (Azure OpenAI)")
+        );
+    }
+
+    #[test]
+    fn maps_non_responses_supported_endpoints_to_chat_completions_marker() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "claude-sonnet-4.5",
+            "vendor": "Anthropic",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"web_search_disabled": true}
+            },
+            "supported_endpoints": ["/v1/messages", "/chat/completions"]
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(
+            info.experimental_supported_tools,
+            vec![
+                "github_copilot_vendor:anthropic".to_string(),
+                "github_copilot_wire_api:chat-completions".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn maps_websocket_only_responses_endpoint_to_chat_completions_marker() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "future-ws-only-model",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"web_search_disabled": true}
+            },
+            "supported_endpoints": ["ws:/responses"]
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(
+            info.experimental_supported_tools,
+            vec![
+                "github_copilot_vendor:openai".to_string(),
+                "github_copilot_wire_api:chat-completions".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_websocket_marker_without_http_responses_endpoint() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "gpt-5.2-codex",
+            "vendor": "OpenAI",
+            "model_picker_enabled": true,
+            "policy": {"state": "enabled"},
+            "capabilities": {
+                "type": "chat",
+                "supports": {"web_search_disabled": true}
+            },
+            "supported_endpoints": ["/responses"]
+        }))
+        .expect("model should parse");
+
+        let info = model
+            .into_model_info(/*priority*/ 0)
+            .expect("model should be selectable");
+
+        assert_eq!(
+            info.experimental_supported_tools,
+            vec![
+                "github_copilot_vendor:openai".to_string(),
+                "github_copilot_wire_api:responses".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_wire_api_marker_when_supported_endpoints_are_missing() {
+        let model: CopilotModel = serde_json::from_value(json!({
+            "id": "gemini-2.5-pro",
+            "vendor": "Google",
             "model_picker_enabled": true,
             "policy": {"state": "enabled"},
             "capabilities": {
@@ -891,11 +1065,7 @@ mod tests {
 
         assert_eq!(
             info.experimental_supported_tools,
-            vec!["github_copilot_vendor:azure-openai".to_string()]
-        );
-        assert_eq!(
-            info.description.as_deref(),
-            Some("Lark via GitHub Copilot (Azure OpenAI)")
+            vec!["github_copilot_vendor:google".to_string()]
         );
     }
 

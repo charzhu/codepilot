@@ -349,7 +349,10 @@ async fn run_remote_compaction_request_v2(
 
                 let report_error = retries > 1
                     || cfg!(debug_assertions)
-                    || !sess.services.model_client.responses_websocket_enabled();
+                    || !sess
+                        .services
+                        .model_client
+                        .responses_websocket_enabled(&turn_context.model_info);
                 if report_error {
                     sess.notify_stream_error(
                         turn_context,
