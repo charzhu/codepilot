@@ -3775,6 +3775,7 @@ async fn make_test_app() -> App {
         thread_event_channels: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
         agent_navigation: AgentNavigationState::default(),
+        league_runs: crate::league::LeagueRunStore::default(),
         side_threads: HashMap::new(),
         active_thread_id: None,
         active_thread_rx: None,
@@ -3838,6 +3839,7 @@ async fn make_test_app_with_channels() -> (
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
+            league_runs: crate::league::LeagueRunStore::default(),
             side_threads: HashMap::new(),
             active_thread_id: None,
             active_thread_rx: None,
@@ -5539,4 +5541,34 @@ async fn side_backtrack_rejection_reports_unavailable_message_snapshot() {
 }
 async fn start_config_write_test_app_server(app: &App) -> Result<AppServerSession> {
     Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await
+}
+
+#[tokio::test]
+async fn open_league_agent_output_opens_detail_from_store() {
+    let mut app = make_test_app().await;
+    let run = codex_league::LeagueRunSnapshot {
+        run_id: "run-detail-test".to_string(),
+        task: "inspect".to_string(),
+        mode: codex_protocol::league::LeagueMode::Debug,
+        status: codex_league::LeagueRunStatus::Completed,
+        cwd: PathBuf::from("C:\\repo"),
+        agents: vec![codex_league::LeagueAgentSnapshot {
+            name: "copilot".to_string(),
+            command: vec!["copilot".to_string(), "-p".to_string()],
+            transport: codex_protocol::league::LeagueAgentTransport::Cli,
+            prompt_delivery: codex_protocol::league::LeaguePromptDelivery::Arg,
+            status: codex_league::LeagueAgentStatus::Completed,
+            web_capability: codex_league::LeagueWebCapability::ProvidedSourcesOnly,
+            exit_code: Some(0),
+            duration_ms: Some(5),
+            stdout_preview: "hello".to_string(),
+            stderr_preview: String::new(),
+            output_truncated: false,
+        }],
+    };
+    app.league_runs.upsert(run.clone());
+
+    app.open_league_agent_output(run.run_id, "copilot".to_string());
+
+    assert!(!app.chat_widget.no_modal_or_popup_active());
 }

@@ -134,6 +134,7 @@ use toml_edit::DocumentMut;
 
 pub(crate) mod agent_roles;
 pub mod edit;
+pub mod league;
 mod managed_features;
 mod network_proxy_spec;
 mod otel;
@@ -149,6 +150,10 @@ pub use codex_config::LoaderOverrides;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
+pub use league::LeagueAgentConfig;
+pub use league::LeagueConfig;
+pub use league::resolve_league_agents;
+pub use league::resolve_league_config;
 pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
@@ -806,6 +811,9 @@ pub struct Config {
 
     /// User-defined role declarations keyed by role name.
     pub agent_roles: BTreeMap<String, AgentRoleConfig>,
+
+    /// External-agent advisory orchestration settings for `/league`.
+    pub league: LeagueConfig,
 
     /// Memories subsystem settings.
     pub memories: MemoriesConfig,
@@ -3001,6 +3009,7 @@ impl Config {
         let agent_roles =
             agent_roles::load_agent_roles(fs, &cfg, &config_layer_stack, &mut startup_warnings)
                 .await?;
+        let league = resolve_league_config(&cfg)?;
 
         let openai_base_url = cfg
             .openai_base_url
@@ -3460,6 +3469,7 @@ impl Config {
             agent_max_threads,
             agent_max_depth,
             agent_roles,
+            league,
             memories: cfg.memories.unwrap_or_default().into(),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,

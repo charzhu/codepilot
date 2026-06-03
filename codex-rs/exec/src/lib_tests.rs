@@ -271,15 +271,73 @@ async fn fleet_exec_prompt_expands_run_and_leaves_status_unchanged() {
         .expect("build default config");
     config.agent_max_threads = Some(2);
 
-    let expanded = expand_fleet_exec_prompt("/fleet fix the failing tests".to_string(), &config);
+    let expanded = expand_exec_prompt("/fleet fix the failing tests".to_string(), &config)
+        .await
+        .expect("expand prompt");
 
     assert!(expanded.contains("<fleet_mode>"));
     assert!(expanded.contains("Original user request:\nfix the failing tests"));
     assert!(expanded.contains("at most 2 concurrent agent threads"));
     assert_eq!(
-        expand_fleet_exec_prompt("/fleet status".to_string(), &config),
+        expand_exec_prompt("/fleet status".to_string(), &config)
+            .await
+            .expect("expand prompt"),
         "/fleet status"
     );
+}
+
+#[tokio::test]
+async fn league_exec_prompt_expands_with_configured_agent() {
+    let codex_home = tempdir().expect("create temp codex home");
+    let cwd = tempdir().expect("create temp cwd");
+    #[cfg(windows)]
+    let agent = codex_home.path().join("agent.cmd");
+    #[cfg(not(windows))]
+    let agent = codex_home.path().join("agent");
+    write_success_agent(&agent).expect("agent stub");
+    let mut config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("build default config");
+    config.league.default_agents = Some(vec!["advisor".to_string()]);
+    config.league.agents.insert(
+        "advisor".to_string(),
+        codex_core::config::LeagueAgentConfig {
+            command: vec![agent.display().to_string()],
+            transport: codex_protocol::league::LeagueAgentTransport::Cli,
+            prompt_delivery: codex_protocol::league::LeaguePromptDelivery::Stdin,
+            prompt_arg: None,
+            capabilities: vec![codex_protocol::league::LeagueAgentCapability::ProvidedSourcesOnly],
+        },
+    );
+
+    let expanded = expand_exec_prompt(
+        "/league --mode research compare current options".to_string(),
+        &config,
+    )
+    .await
+    .expect("expand league prompt");
+
+    assert!(expanded.contains("<league_results>"));
+    assert!(expanded.contains("Mode: research"));
+    assert!(expanded.contains("Original user request:\ncompare current options"));
+    assert!(expanded.contains("Agent: advisor"));
+}
+
+#[cfg(windows)]
+fn write_success_agent(path: &std::path::Path) -> std::io::Result<()> {
+    std::fs::write(path, "@echo off\r\necho advisory ok\r\n")
+}
+
+#[cfg(not(windows))]
+fn write_success_agent(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, "#!/bin/sh\necho advisory ok\n")?;
+    let mut permissions = std::fs::metadata(path)?.permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(path, permissions)
 }
 
 #[test]

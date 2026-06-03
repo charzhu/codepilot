@@ -15,6 +15,7 @@ pub mod error;
 pub mod exec_output;
 pub mod fleet;
 pub mod items;
+pub mod league;
 pub mod mcp;
 pub mod mcp_approval_meta;
 pub mod memory_citation;

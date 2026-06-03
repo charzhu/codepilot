@@ -37,6 +37,7 @@ pub enum SlashCommand {
     Plan,
     Goal,
     Fleet,
+    League,
     #[strum(to_string = "tasks")]
     Tasks,
     Agent,
@@ -121,6 +122,7 @@ impl SlashCommand {
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Fleet => "run a task with multi-agent orchestration",
+            SlashCommand::League => "run a task with external-agent advisory orchestration",
             SlashCommand::Tasks => "show fleet task status",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side | SlashCommand::Btw => {
@@ -161,6 +163,7 @@ impl SlashCommand {
                 | SlashCommand::Plan
                 | SlashCommand::Goal
                 | SlashCommand::Fleet
+                | SlashCommand::League
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
@@ -225,6 +228,7 @@ impl SlashCommand {
             | SlashCommand::Stop
             | SlashCommand::Goal
             | SlashCommand::Fleet
+            | SlashCommand::League
             | SlashCommand::Tasks
             | SlashCommand::Mcp
             | SlashCommand::Apps
@@ -301,6 +305,13 @@ mod tests {
         assert_eq!(SlashCommand::from_str("fleet"), Ok(SlashCommand::Fleet));
         assert!(SlashCommand::Fleet.supports_inline_args());
         assert!(SlashCommand::Fleet.available_during_task());
+    }
+
+    #[test]
+    fn league_command_parses_and_supports_args() {
+        assert_eq!(SlashCommand::from_str("league"), Ok(SlashCommand::League));
+        assert!(SlashCommand::League.supports_inline_args());
+        assert!(SlashCommand::League.available_during_task());
     }
 
     #[test]

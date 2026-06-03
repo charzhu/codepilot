@@ -46,6 +46,9 @@ use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::league::LeagueAgentCapability;
+use codex_protocol::league::LeagueAgentTransport;
+use codex_protocol::league::LeaguePromptDelivery;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::NetworkSandboxPolicy;
@@ -423,6 +426,9 @@ pub struct ConfigToml {
     /// Agent-related settings (thread limits, etc.).
     pub agents: Option<AgentsToml>,
 
+    /// External-agent advisory orchestration settings for `/league`.
+    pub league: Option<LeagueToml>,
+
     /// Memories subsystem settings.
     pub memories: Option<MemoriesToml>,
 
@@ -683,6 +689,58 @@ pub struct AgentsToml {
     /// ```
     #[serde(default, flatten)]
     pub roles: BTreeMap<String, AgentRoleToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LeagueToml {
+    /// Whether `/league` is enabled. Defaults to true.
+    pub enabled: Option<bool>,
+
+    /// Default external agents to try when `/league --agents` is not supplied.
+    pub default_agents: Option<Vec<String>>,
+
+    /// External agents to skip even if they are installed or configured.
+    pub disabled_agents: Option<Vec<String>>,
+
+    /// Maximum number of external agents to use for a single `/league` request.
+    #[schemars(range(min = 1))]
+    pub max_agents: Option<usize>,
+
+    /// Maximum runtime in seconds for each external agent command.
+    #[schemars(range(min = 1))]
+    pub agent_timeout_seconds: Option<u64>,
+
+    /// Maximum bytes retained from each agent stdout/stderr stream.
+    #[schemars(range(min = 1))]
+    pub output_limit_bytes: Option<usize>,
+
+    /// Number of in-memory league runs retained in the TUI status view.
+    #[schemars(range(min = 1))]
+    pub status_retention: Option<usize>,
+
+    /// Per-agent command overrides keyed by agent name.
+    #[serde(default)]
+    pub agents: BTreeMap<String, LeagueAgentToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LeagueAgentToml {
+    /// Command and base arguments used to invoke this external agent.
+    pub command: Option<Vec<String>>,
+
+    /// Transport used to invoke this external agent. Defaults to `cli`.
+    pub transport: Option<LeagueAgentTransport>,
+
+    /// How the generated prompt should be delivered to the external agent.
+    pub prompt_delivery: Option<LeaguePromptDelivery>,
+
+    /// Optional argument used by prompt_delivery = "arg".
+    pub prompt_arg: Option<String>,
+
+    /// Declared capabilities for routing advisory lanes.
+    pub capabilities: Option<Vec<LeagueAgentCapability>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]

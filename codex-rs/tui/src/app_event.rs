@@ -140,6 +140,25 @@ pub(crate) enum AppEvent {
     OpenAgentPicker,
     /// Open the fleet status board for active and completed agent threads.
     OpenFleetStatus,
+    /// Open the league status board for external agent CLI runs.
+    OpenLeagueStatus,
+    /// Open captured stdout/stderr for one league external-agent lane.
+    OpenLeagueAgentOutput {
+        run_id: String,
+        agent_name: String,
+    },
+    /// Start a parallel external-agent CLI league run.
+    StartLeagueRun {
+        request: codex_league::LeagueRunRequest,
+        history_text: String,
+    },
+    /// Update status for a league run.
+    LeagueRunUpdated(codex_league::LeagueRunSnapshot),
+    /// Complete a league run and submit synthesis when possible.
+    LeagueRunCompleted {
+        snapshot: codex_league::LeagueRunSnapshot,
+        history_text: String,
+    },
     /// Switch the active thread to the selected agent.
     SelectAgentThread(ThreadId),
 

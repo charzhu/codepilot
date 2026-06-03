@@ -1736,6 +1736,64 @@ impl App {
             AppEvent::OpenFleetStatus => {
                 self.open_fleet_status(app_server).await;
             }
+            AppEvent::OpenLeagueStatus => {
+                self.open_league_status();
+            }
+            AppEvent::OpenLeagueAgentOutput { run_id, agent_name } => {
+                self.open_league_agent_output(run_id, agent_name);
+            }
+            AppEvent::StartLeagueRun {
+                request,
+                history_text,
+            } => {
+                let initial = codex_league::initial_snapshot(&request);
+                self.league_runs.upsert(initial);
+                self.chat_widget.set_league_task_running(/*running*/ true);
+                let app_event_tx = self.app_event_tx.clone();
+                let (update_tx, mut update_rx) = tokio::sync::mpsc::unbounded_channel();
+                tokio::spawn(async move {
+                    let forward_tx = app_event_tx.clone();
+                    let forwarder = tokio::spawn(async move {
+                        while let Some(snapshot) = update_rx.recv().await {
+                            forward_tx.send(AppEvent::LeagueRunUpdated(snapshot));
+                        }
+                    });
+                    let final_snapshot = codex_league::run_league(request, Some(update_tx)).await;
+                    let _ = forwarder.await;
+                    app_event_tx.send(AppEvent::LeagueRunCompleted {
+                        snapshot: final_snapshot,
+                        history_text,
+                    });
+                });
+                self.chat_widget.add_info_message(
+                    "Started /league external-agent run.".to_string(),
+                    Some("Use /league status to inspect progress.".to_string()),
+                );
+            }
+            AppEvent::LeagueRunUpdated(snapshot) => {
+                self.league_runs.upsert(snapshot);
+            }
+            AppEvent::LeagueRunCompleted {
+                snapshot,
+                history_text,
+            } => {
+                let any_completed = snapshot
+                    .agents
+                    .iter()
+                    .any(|agent| agent.status == codex_league::LeagueAgentStatus::Completed);
+                self.league_runs.upsert(snapshot.clone());
+                if any_completed {
+                    let prompt = codex_league::build_synthesis_prompt(&snapshot);
+                    self.chat_widget
+                        .submit_league_synthesis(prompt, history_text);
+                } else {
+                    self.chat_widget.set_league_task_running(/*running*/ false);
+                    self.chat_widget.add_error_message(
+                        "All /league external agents failed. Use /league status for details."
+                            .to_string(),
+                    );
+                }
+            }
             AppEvent::SelectAgentThread(thread_id) => {
                 self.select_agent_thread_and_discard_side(tui, app_server, thread_id)
                     .await?;

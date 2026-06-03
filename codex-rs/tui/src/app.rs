@@ -542,6 +542,7 @@ pub(crate) struct App {
     thread_event_channels: HashMap<ThreadId, ThreadEventChannel>,
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
     agent_navigation: AgentNavigationState,
+    league_runs: crate::league::LeagueRunStore,
     side_threads: HashMap<ThreadId, SideThreadState>,
     active_thread_id: Option<ThreadId>,
     active_thread_rx: Option<mpsc::Receiver<ThreadBufferedEvent>>,
@@ -961,6 +962,7 @@ See the Codex keymap documentation for supported actions and examples."
         #[cfg(not(debug_assertions))]
         let upgrade_version = crate::updates::get_upgrade_version(&config);
 
+        let league_status_retention = config.league.status_retention;
         let mut app = Self {
             model_catalog,
             session_telemetry: session_telemetry.clone(),
@@ -998,6 +1000,7 @@ See the Codex keymap documentation for supported actions and examples."
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
             agent_navigation: AgentNavigationState::default(),
+            league_runs: crate::league::LeagueRunStore::with_retention(league_status_retention),
             side_threads: HashMap::new(),
             active_thread_id: None,
             active_thread_rx: None,

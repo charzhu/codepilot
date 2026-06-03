@@ -106,6 +106,21 @@ impl App {
             .show_selection_view(crate::fleet::fleet_status_params(rows));
     }
 
+    pub(super) fn open_league_status(&mut self) {
+        self.chat_widget
+            .show_selection_view(crate::league::league_status_params(self.league_runs.runs()));
+    }
+
+    pub(super) fn open_league_agent_output(&mut self, run_id: String, agent_name: String) {
+        let Some((run, agent)) = self.league_runs.find_agent(&run_id, &agent_name) else {
+            self.chat_widget
+                .add_error_message("League output no longer available.".to_string());
+            return;
+        };
+        self.chat_widget
+            .show_selection_view(crate::league::league_agent_output_params(&run, &agent));
+    }
+
     pub(super) fn is_terminal_thread_read_error(err: &color_eyre::Report) -> bool {
         err.chain()
             .any(|cause| cause.to_string().contains("thread not loaded:"))

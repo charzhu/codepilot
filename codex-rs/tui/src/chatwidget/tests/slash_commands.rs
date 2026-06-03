@@ -243,6 +243,110 @@ async fn fleet_run_while_task_running_rejects_without_submit() {
 }
 
 #[tokio::test]
+async fn league_slash_command_starts_parallel_run_with_original_history() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    configure_stub_league_agent(&mut chat);
+    chat.thread_id = Some(ThreadId::new());
+
+    submit_composer_text(&mut chat, "/league --mode debug fix failing tests");
+
+    assert_no_submit_op(&mut op_rx);
+    assert_eq!(
+        next_add_to_history_event(&mut rx),
+        "/league --mode debug fix failing tests"
+    );
+    let request = next_start_league_run_event(&mut rx);
+    assert_eq!(request.mode, codex_protocol::league::LeagueMode::Debug);
+    assert_eq!(request.task, "fix failing tests");
+    assert_eq!(request.agents.len(), 1);
+    assert_eq!(request.agents[0].name, "advisor");
+}
+
+#[tokio::test]
+async fn league_status_slash_command_opens_status_board() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    configure_stub_league_agent(&mut chat);
+
+    submit_composer_text(&mut chat, "/league status");
+
+    assert_no_submit_op(&mut op_rx);
+    next_open_league_status_event(&mut rx);
+}
+
+#[tokio::test]
+async fn league_status_slash_command_opens_while_task_running() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    configure_stub_league_agent(&mut chat);
+    chat.bottom_pane.set_task_running(/*running*/ true);
+
+    submit_composer_text(&mut chat, "/league status");
+
+    assert_no_submit_op(&mut op_rx);
+    next_open_league_status_event(&mut rx);
+}
+#[tokio::test]
+async fn league_slash_command_without_available_agents_rejects_without_submit() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.league.default_agents = Some(vec!["missing-agent-for-test".to_string()]);
+
+    submit_composer_text(&mut chat, "/league research current options");
+
+    assert_no_submit_op(&mut op_rx);
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("No external coding agents are available for /league"));
+}
+
+fn configure_stub_league_agent(chat: &mut ChatWidget) {
+    let agent = std::env::current_exe().expect("current exe");
+    chat.config.league.default_agents = Some(vec!["advisor".to_string()]);
+    chat.config.league.agents.insert(
+        "advisor".to_string(),
+        crate::legacy_core::config::LeagueAgentConfig {
+            command: vec![agent.display().to_string()],
+            transport: codex_protocol::league::LeagueAgentTransport::Cli,
+            prompt_delivery: codex_protocol::league::LeaguePromptDelivery::Stdin,
+            prompt_arg: None,
+            capabilities: vec![codex_protocol::league::LeagueAgentCapability::ProvidedSourcesOnly],
+        },
+    );
+}
+
+fn next_start_league_run_event(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) -> codex_league::LeagueRunRequest {
+    loop {
+        match rx.try_recv() {
+            Ok(AppEvent::StartLeagueRun { request, .. }) => return request,
+            Ok(_) => continue,
+            Err(TryRecvError::Empty) => panic!("expected StartLeagueRun event but queue was empty"),
+            Err(TryRecvError::Disconnected) => {
+                panic!("expected StartLeagueRun event but channel closed")
+            }
+        }
+    }
+}
+
+fn next_open_league_status_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) {
+    loop {
+        match rx.try_recv() {
+            Ok(AppEvent::OpenLeagueStatus) => return,
+            Ok(_) => continue,
+            Err(TryRecvError::Empty) => {
+                panic!("expected OpenLeagueStatus event but queue was empty")
+            }
+            Err(TryRecvError::Disconnected) => {
+                panic!("expected OpenLeagueStatus event but channel closed")
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

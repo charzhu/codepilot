@@ -63,6 +63,7 @@ use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_and_load_options;
+use codex_core::config::resolve_league_agents;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config::resolve_profile_v2_config_path;
 use codex_core::find_thread_meta_by_name_str;
@@ -84,6 +85,9 @@ use codex_protocol::config_types::SandboxMode;
 use codex_protocol::fleet::FleetCommandKind;
 use codex_protocol::fleet::FleetPromptOptions;
 use codex_protocol::fleet::expand_fleet_prompt;
+use codex_protocol::league::LeagueCommandKind;
+use codex_protocol::league::LeaguePromptOptions;
+use codex_protocol::league::expand_league_prompt;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
@@ -631,7 +635,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 })
                 .or(root_prompt);
             let prompt_text = resolve_prompt(prompt_arg);
-            let model_prompt_text = expand_fleet_exec_prompt(prompt_text.clone(), &config);
+            let model_prompt_text = expand_exec_prompt(prompt_text.clone(), &config).await?;
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
                 .chain(args.images.iter().cloned())
@@ -653,7 +657,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         }
         (None, root_prompt, imgs) => {
             let prompt_text = resolve_root_prompt(root_prompt);
-            let model_prompt_text = expand_fleet_exec_prompt(prompt_text.clone(), &config);
+            let model_prompt_text = expand_exec_prompt(prompt_text.clone(), &config).await?;
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
                 .map(|path| UserInput::LocalImage { path, detail: None })
@@ -1847,7 +1851,7 @@ fn resolve_root_prompt(prompt_arg: Option<String>) -> String {
     }
 }
 
-fn expand_fleet_exec_prompt(prompt: String, config: &Config) -> String {
+async fn expand_exec_prompt(prompt: String, config: &Config) -> anyhow::Result<String> {
     let expansion = expand_fleet_prompt(
         &prompt,
         FleetPromptOptions {
@@ -1856,9 +1860,59 @@ fn expand_fleet_exec_prompt(prompt: String, config: &Config) -> String {
         },
     );
     if expansion.kind == FleetCommandKind::Run {
-        expansion.model_text
-    } else {
-        prompt
+        return Ok(expansion.model_text);
+    }
+
+    expand_league_exec_prompt(prompt, config).await
+}
+
+async fn expand_league_exec_prompt(prompt: String, config: &Config) -> anyhow::Result<String> {
+    let parsed = expand_league_prompt(
+        &prompt,
+        LeaguePromptOptions {
+            agents: Vec::new(),
+            cwd: Some(config.cwd.display().to_string()),
+        },
+    );
+    if parsed.kind == LeagueCommandKind::NotLeague || parsed.task.is_empty() {
+        return Ok(prompt);
+    }
+    if parsed.kind == LeagueCommandKind::Status {
+        anyhow::bail!("/league status is only available in the interactive TUI");
+    }
+    let agents = resolve_league_agents(config, parsed.requested_agents.as_deref());
+    let expansion = expand_league_prompt(
+        &prompt,
+        LeaguePromptOptions {
+            agents: agents.clone(),
+            cwd: Some(config.cwd.display().to_string()),
+        },
+    );
+    match expansion.kind {
+        LeagueCommandKind::Run => {
+            let mut request = codex_league::LeagueRunRequest::new(
+                expansion.task,
+                expansion.mode,
+                config.cwd.to_path_buf(),
+                agents,
+            );
+            request.timeout = std::time::Duration::from_secs(config.league.agent_timeout_seconds);
+            request.output_limit_bytes = config.league.output_limit_bytes;
+            let snapshot = codex_league::run_league(request, /*updates*/ None).await;
+            if snapshot
+                .agents
+                .iter()
+                .all(|agent| agent.status != codex_league::LeagueAgentStatus::Completed)
+            {
+                anyhow::bail!("all /league external agents failed");
+            }
+            Ok(codex_league::build_synthesis_prompt(&snapshot))
+        }
+        LeagueCommandKind::UsageError => anyhow::bail!(expansion.model_text),
+        LeagueCommandKind::Status => {
+            anyhow::bail!("/league status is only available in the interactive TUI")
+        }
+        LeagueCommandKind::NotLeague => Ok(prompt),
     }
 }
 

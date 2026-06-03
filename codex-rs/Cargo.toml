@@ -51,6 +51,7 @@ members = [
     "external-agent-migration",
     "external-agent-sessions",
     "keyring-store",
+    "league",
     "file-search",
     "file-watcher",
     "linux-sandbox",
@@ -177,6 +178,7 @@ codex-file-watcher = { path = "file-watcher" }
 codex-git-utils = { path = "git-utils" }
 codex-hooks = { path = "hooks" }
 codex-keyring-store = { path = "keyring-store" }
+codex-league = { path = "league" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
@@ -246,6 +248,7 @@ age = "0.11.1"
 allocative = "0.3.3"
 ansi-to-tui = "7.0.0"
 anyhow = "1"
+agent-client-protocol = "0.13.1"
 arboard = { version = "3", features = ["wayland-data-control"] }
 arc-swap = "1.9.0"
 assert_cmd = "2"

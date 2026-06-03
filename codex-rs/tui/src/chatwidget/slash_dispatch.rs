@@ -14,11 +14,16 @@ use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_slash_command;
+use crate::legacy_core::config::resolve_league_agents;
 use codex_protocol::fleet::FLEET_USAGE;
 use codex_protocol::fleet::FleetCommandKind;
 use codex_protocol::fleet::FleetPromptOptions;
 use codex_protocol::fleet::expand_fleet_prompt;
 use codex_protocol::fleet::fleet_task_offset;
+use codex_protocol::league::LEAGUE_USAGE;
+use codex_protocol::league::LeagueCommandKind;
+use codex_protocol::league::LeaguePromptOptions;
+use codex_protocol::league::expand_league_prompt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -218,6 +223,100 @@ impl ChatWidget {
         }
     }
 
+    fn league_prompt_options(
+        &self,
+        agents: Vec<codex_protocol::league::LeagueAgent>,
+    ) -> LeaguePromptOptions {
+        LeaguePromptOptions {
+            agents,
+            cwd: Some(self.config.cwd.display().to_string()),
+        }
+    }
+
+    fn handle_league_command_args(&mut self, user_message: UserMessage) {
+        if !self.config.league.enabled {
+            self.add_error_message("'/league' is disabled by configuration.".to_string());
+            return;
+        }
+
+        let UserMessage {
+            text,
+            local_images: _,
+            remote_image_urls: _,
+            text_elements,
+            mention_bindings: _,
+        } = user_message;
+        let (args, arg_elements) = trimmed_task_and_elements(&text, text_elements);
+        let _ = arg_elements;
+        let input = format!("/league {args}");
+        let parsed = expand_league_prompt(&input, self.league_prompt_options(Vec::new()));
+        if parsed.task.is_empty() {
+            self.add_error_message(parsed.model_text);
+            return;
+        }
+
+        let agents = resolve_league_agents(&self.config, parsed.requested_agents.as_deref());
+        let expansion = expand_league_prompt(&input, self.league_prompt_options(agents.clone()));
+
+        match expansion.kind {
+            LeagueCommandKind::Run => {
+                if self.bottom_pane.is_task_running() {
+                    self.add_to_history(history_cell::new_error_event(
+                        "'/league' cannot start a new task while another task is in progress."
+                            .to_string(),
+                    ));
+                    self.request_redraw();
+                    return;
+                }
+
+                let mut request = codex_league::LeagueRunRequest::new(
+                    expansion.task.clone(),
+                    expansion.mode,
+                    self.config.cwd.to_path_buf(),
+                    agents,
+                );
+                request.timeout =
+                    std::time::Duration::from_secs(self.config.league.agent_timeout_seconds);
+                request.output_limit_bytes = self.config.league.output_limit_bytes;
+                self.append_message_history_entry(expansion.history_text.clone());
+                self.app_event_tx.send(AppEvent::StartLeagueRun {
+                    request,
+                    history_text: expansion.history_text,
+                });
+            }
+            LeagueCommandKind::Status => {
+                self.app_event_tx.send(AppEvent::OpenLeagueStatus);
+                self.append_message_history_entry(expansion.history_text);
+            }
+            LeagueCommandKind::UsageError => {
+                self.add_error_message(expansion.model_text);
+            }
+            LeagueCommandKind::NotLeague => {
+                self.add_error_message(LEAGUE_USAGE.to_string());
+            }
+        }
+    }
+
+    pub(crate) fn submit_league_synthesis(&mut self, prompt: String, history_text: String) {
+        let submitted = UserMessage {
+            text: prompt,
+            local_images: Vec::new(),
+            remote_image_urls: Vec::new(),
+            text_elements: Vec::new(),
+            mention_bindings: Vec::new(),
+        };
+        let history_record = UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
+            text: history_text,
+            text_elements: Vec::new(),
+        });
+        let _accepted = self.submit_user_message_with_history_record(submitted, history_record);
+    }
+
+    pub(crate) fn set_league_task_running(&mut self, running: bool) {
+        self.bottom_pane.set_task_running(running);
+        self.request_redraw();
+    }
+
     fn emit_raw_output_mode_changed(&self, enabled: bool) {
         self.app_event_tx
             .send(AppEvent::RawOutputModeChanged { enabled });
@@ -354,6 +453,9 @@ impl ChatWidget {
             }
             SlashCommand::Fleet => {
                 self.add_error_message(FLEET_USAGE.to_string());
+            }
+            SlashCommand::League => {
+                self.add_error_message(LEAGUE_USAGE.to_string());
             }
             SlashCommand::Tasks => {
                 self.app_event_tx.send(AppEvent::OpenFleetStatus);
@@ -633,13 +735,14 @@ impl ChatWidget {
             return;
         }
 
-        if cmd == SlashCommand::Fleet
-            && !trimmed.eq_ignore_ascii_case("status")
+        if ((cmd == SlashCommand::Fleet || cmd == SlashCommand::League)
+            && !trimmed.eq_ignore_ascii_case("status"))
             && self.bottom_pane.is_task_running()
         {
-            self.add_to_history(history_cell::new_error_event(
-                "'/fleet' cannot start a new task while another task is in progress.".to_string(),
-            ));
+            let command = cmd.command();
+            self.add_to_history(history_cell::new_error_event(format!(
+                "'/{command}' cannot start a new task while another task is in progress."
+            )));
             self.request_redraw();
             return;
         }
@@ -920,6 +1023,17 @@ impl ChatWidget {
                 );
                 self.handle_fleet_command_args(user_message);
             }
+            SlashCommand::League if !trimmed.is_empty() => {
+                let user_message = self.prepared_inline_user_message(
+                    args,
+                    text_elements,
+                    local_images,
+                    remote_image_urls,
+                    mention_bindings,
+                    source,
+                );
+                self.handle_league_command_args(user_message);
+            }
             SlashCommand::Review if !trimmed.is_empty() => {
                 self.submit_op(AppCommand::review(ReviewTarget::Custom {
                     instructions: args,
@@ -1072,6 +1186,7 @@ impl ChatWidget {
             connectors_enabled: self.connectors_enabled(),
             plugins_command_enabled: self.config.features.enabled(Feature::Plugins),
             goal_command_enabled: self.config.features.enabled(Feature::Goals),
+            league_command_enabled: self.config.league.enabled,
             service_tier_commands_enabled: self.fast_mode_enabled(),
             personality_command_enabled: self.config.features.enabled(Feature::Personality),
             realtime_conversation_enabled: self.realtime_conversation_enabled(),
@@ -1100,6 +1215,7 @@ impl ChatWidget {
             | SlashCommand::Copy
             | SlashCommand::Raw
             | SlashCommand::Fleet
+            | SlashCommand::League
             | SlashCommand::Tasks
             | SlashCommand::Vim
             | SlashCommand::Diff

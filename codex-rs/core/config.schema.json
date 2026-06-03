@@ -1222,6 +1222,128 @@
       ],
       "description": "One action binding value in config.\n\nThis accepts either:\n\n1. A single key spec string (`\"ctrl-a\"`). 2. A list of key spec strings (`[\"ctrl-a\", \"alt-a\"]`).\n\nAn empty list explicitly unbinds the action in that scope. Because an explicit empty list is still a configured value, runtime resolution must not fall through to global or built-in defaults for that action."
     },
+    "LeagueAgentCapability": {
+      "enum": [
+        "code",
+        "provided_sources_only",
+        "web_native",
+        "web_fetch_only",
+        "web_via_mcp"
+      ],
+      "type": "string"
+    },
+    "LeagueAgentToml": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "description": "Declared capabilities for routing advisory lanes.",
+          "items": {
+            "$ref": "#/definitions/LeagueAgentCapability"
+          },
+          "type": "array"
+        },
+        "command": {
+          "description": "Command and base arguments used to invoke this external agent.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "prompt_arg": {
+          "description": "Optional argument used by prompt_delivery = \"arg\".",
+          "type": "string"
+        },
+        "prompt_delivery": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LeaguePromptDelivery"
+            }
+          ],
+          "description": "How the generated prompt should be delivered to the external agent."
+        },
+        "transport": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/LeagueAgentTransport"
+            }
+          ],
+          "description": "Transport used to invoke this external agent. Defaults to `cli`."
+        }
+      },
+      "type": "object"
+    },
+    "LeagueAgentTransport": {
+      "enum": [
+        "cli",
+        "acp"
+      ],
+      "type": "string"
+    },
+    "LeaguePromptDelivery": {
+      "enum": [
+        "stdin",
+        "stdin_file",
+        "arg",
+        "placeholder"
+      ],
+      "type": "string"
+    },
+    "LeagueToml": {
+      "additionalProperties": false,
+      "properties": {
+        "agent_timeout_seconds": {
+          "description": "Maximum runtime in seconds for each external agent command.",
+          "format": "uint64",
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "agents": {
+          "additionalProperties": {
+            "$ref": "#/definitions/LeagueAgentToml"
+          },
+          "default": {},
+          "description": "Per-agent command overrides keyed by agent name.",
+          "type": "object"
+        },
+        "default_agents": {
+          "description": "Default external agents to try when `/league --agents` is not supplied.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "disabled_agents": {
+          "description": "External agents to skip even if they are installed or configured.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "description": "Whether `/league` is enabled. Defaults to true.",
+          "type": "boolean"
+        },
+        "max_agents": {
+          "description": "Maximum number of external agents to use for a single `/league` request.",
+          "format": "uint",
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "output_limit_bytes": {
+          "description": "Maximum bytes retained from each agent stdout/stderr stream.",
+          "format": "uint",
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "status_retention": {
+          "description": "Number of in-memory league runs retained in the TUI status view.",
+          "format": "uint",
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "MarketplaceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -4717,6 +4839,14 @@
     "instructions": {
       "description": "System instructions.",
       "type": "string"
+    },
+    "league": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/LeagueToml"
+        }
+      ],
+      "description": "External-agent advisory orchestration settings for `/league`."
     },
     "log_dir": {
       "allOf": [
