@@ -260,7 +260,7 @@ fn prompt_with_stdin_context_preserves_trailing_newline() {
 }
 
 #[tokio::test]
-async fn fleet_exec_prompt_expands_run_and_leaves_status_unchanged() {
+async fn fleet_exec_prompt_expands_run_and_rejects_status_controls() {
     let codex_home = tempdir().expect("create temp codex home");
     let cwd = tempdir().expect("create temp cwd");
     let mut config = ConfigBuilder::default()
@@ -278,12 +278,10 @@ async fn fleet_exec_prompt_expands_run_and_leaves_status_unchanged() {
     assert!(expanded.contains("<fleet_mode>"));
     assert!(expanded.contains("Original user request:\nfix the failing tests"));
     assert!(expanded.contains("at most 2 concurrent agent threads"));
-    assert_eq!(
-        expand_exec_prompt("/fleet status".to_string(), &config)
-            .await
-            .expect("expand prompt"),
-        "/fleet status"
-    );
+    let err = expand_exec_prompt("/fleet status".to_string(), &config)
+        .await
+        .expect_err("fleet status is interactive-only");
+    assert!(err.to_string().contains("interactive TUI"));
 }
 
 #[tokio::test]

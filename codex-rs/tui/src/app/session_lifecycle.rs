@@ -85,25 +85,20 @@ impl App {
     }
 
     pub(super) async fn open_fleet_status(&mut self, app_server: &mut AppServerSession) {
-        self.refresh_agent_picker_liveness(app_server).await;
+        let _ = app_server;
+        self.chat_widget
+            .show_selection_view(crate::fleet::fleet_status_params(self.fleet_runs.runs()));
+    }
 
-        let rows = self
-            .agent_navigation
-            .ordered_threads()
-            .into_iter()
-            .filter(|(thread_id, _)| Some(*thread_id) != self.primary_thread_id)
-            .map(|(thread_id, entry)| crate::fleet::FleetStatusThread {
-                thread_id,
-                agent_nickname: entry.agent_nickname.clone(),
-                agent_role: entry.agent_role.clone(),
-                is_closed: entry.is_closed,
-                is_primary: self.primary_thread_id == Some(thread_id),
-                is_current: self.active_thread_id == Some(thread_id),
-            })
-            .collect();
+    pub(super) fn open_fleet_run_details(&mut self, run_id: String) {
+        let Some(run) = self.fleet_runs.find(&run_id) else {
+            self.chat_widget
+                .add_error_message(format!("Fleet run not found: {run_id}"));
+            return;
+        };
 
         self.chat_widget
-            .show_selection_view(crate::fleet::fleet_status_params(rows));
+            .show_selection_view(crate::fleet::fleet_run_detail_params(&run));
     }
 
     pub(super) fn open_league_status(&mut self) {
