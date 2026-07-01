@@ -35,7 +35,7 @@ pub fn fingerprint(config: &McpServerConfig) -> String {
             hasher.update(b"\0");
             let cwd_normalized = cwd
                 .as_ref()
-                .map(|path| normalize_cwd(path))
+                .map(|path| normalize_cwd(Path::new(path.as_str())))
                 .unwrap_or_default();
             hasher.update(cwd_normalized.as_bytes());
         }
@@ -89,6 +89,7 @@ pub fn is_self_reference(config: &McpServerConfig, additional_self_names: &[&str
 mod tests {
     use std::collections::HashMap;
 
+    use codex_config::McpServerAuth;
     use codex_config::McpServerConfig;
     use codex_config::McpServerTransportConfig;
     use pretty_assertions::assert_eq;
@@ -105,6 +106,7 @@ mod tests {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            auth: McpServerAuth::default(),
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
             required: false,
@@ -130,6 +132,7 @@ mod tests {
                 http_headers: None,
                 env_http_headers: None,
             },
+            auth: McpServerAuth::default(),
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
             required: false,

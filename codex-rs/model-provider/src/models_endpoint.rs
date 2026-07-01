@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
+use codex_api::AgentIdentityTelemetry;
 use codex_api::ModelsClient;
 use codex_api::RequestTelemetry;
 use codex_api::ReqwestTransport;
@@ -17,6 +17,7 @@ use codex_login::collect_auth_env_telemetry;
 use codex_login::default_client::build_reqwest_client;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::ModelsEndpointClient;
+use codex_models_manager::manager::ModelsEndpointFuture;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CoreResult;
@@ -26,6 +27,7 @@ use codex_response_debug_context::telemetry_transport_error_message;
 use http::HeaderMap;
 use tokio::time::timeout;
 
+use crate::auth::agent_identity_telemetry;
 use crate::auth::resolve_provider_auth;
 
 const MODELS_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -56,21 +58,6 @@ impl OpenAiModelsEndpoint {
         }
     }
 
-    fn auth_env(&self) -> AuthEnvTelemetry {
-        let codex_api_key_env_enabled = self
-            .auth_manager
-            .as_ref()
-            .is_some_and(|auth_manager| auth_manager.codex_api_key_env_enabled());
-        collect_auth_env_telemetry(&self.provider_info, codex_api_key_env_enabled)
-    }
-}
-
-#[async_trait]
-impl ModelsEndpointClient for OpenAiModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        self.provider_info.has_command_auth()
-    }
-
     async fn uses_codex_backend(&self) -> bool {
         self.auth()
             .await
@@ -90,10 +77,16 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         let api_auth = resolve_provider_auth(auth.as_ref(), &self.provider_info)?;
         let transport = ReqwestTransport::new(build_reqwest_client());
         let auth_telemetry = auth_header_telemetry(api_auth.as_ref());
+        let agent_identity_telemetry = if let Some(CodexAuth::AgentIdentity(auth)) = auth.as_ref() {
+            Some(agent_identity_telemetry(auth))
+        } else {
+            None
+        };
         let request_telemetry: Arc<dyn RequestTelemetry> = Arc::new(ModelsRequestTelemetry {
             auth_mode: auth_mode.map(|mode| TelemetryAuthMode::from(mode).to_string()),
             auth_header_attached: auth_telemetry.attached,
             auth_header_name: auth_telemetry.name,
+            agent_identity_telemetry,
             auth_env: self.auth_env(),
         });
         let client = ModelsClient::new(transport, api_provider, api_auth)
@@ -107,6 +100,31 @@ impl ModelsEndpointClient for OpenAiModelsEndpoint {
         .map_err(|_| CodexErr::Timeout)?
         .map_err(map_api_error)
     }
+
+    fn auth_env(&self) -> AuthEnvTelemetry {
+        let codex_api_key_env_enabled = self
+            .auth_manager
+            .as_ref()
+            .is_some_and(|auth_manager| auth_manager.codex_api_key_env_enabled());
+        collect_auth_env_telemetry(&self.provider_info, codex_api_key_env_enabled)
+    }
+}
+
+impl ModelsEndpointClient for OpenAiModelsEndpoint {
+    fn has_command_auth(&self) -> bool {
+        self.provider_info.has_command_auth()
+    }
+
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+        Box::pin(OpenAiModelsEndpoint::uses_codex_backend(self))
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        client_version: &'a str,
+    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+        Box::pin(OpenAiModelsEndpoint::list_models(self, client_version))
+    }
 }
 
 #[derive(Clone)]
@@ -114,6 +132,7 @@ struct ModelsRequestTelemetry {
     auth_mode: Option<String>,
     auth_header_attached: bool,
     auth_header_name: Option<&'static str>,
+    agent_identity_telemetry: Option<AgentIdentityTelemetry>,
     auth_env: AuthEnvTelemetry,
 }
 
@@ -154,6 +173,8 @@ impl RequestTelemetry for ModelsRequestTelemetry {
             auth.error = response_debug.auth_error.as_deref(),
             auth.error_code = response_debug.auth_error_code.as_deref(),
             auth.mode = self.auth_mode.as_deref(),
+            auth.agent_id = self.agent_identity_telemetry.as_ref().map(|metadata| metadata.agent_id.as_str()),
+            auth.task_id = self.agent_identity_telemetry.as_ref().map(|metadata| metadata.task_id.as_str()),
         );
         tracing::event!(
             target: "codex_otel.trace_safe",
@@ -178,6 +199,8 @@ impl RequestTelemetry for ModelsRequestTelemetry {
             auth.error = response_debug.auth_error.as_deref(),
             auth.error_code = response_debug.auth_error_code.as_deref(),
             auth.mode = self.auth_mode.as_deref(),
+            auth.agent_id = self.agent_identity_telemetry.as_ref().map(|metadata| metadata.agent_id.as_str()),
+            auth.task_id = self.agent_identity_telemetry.as_ref().map(|metadata| metadata.task_id.as_str()),
         );
         emit_feedback_request_tags_with_auth_env(
             &FeedbackRequestTags {

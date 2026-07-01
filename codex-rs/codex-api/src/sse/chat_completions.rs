@@ -297,6 +297,7 @@ async fn append_text_delta(
                 role: "assistant".to_string(),
                 content: Vec::new(),
                 phase: None,
+                internal_chat_message_metadata_passthrough: None,
             })))
             .await;
     }
@@ -324,6 +325,7 @@ async fn finalize_chat_items(
                     text: state.text.clone(),
                 }],
                 phase: None,
+                internal_chat_message_metadata_passthrough: None,
             })))
             .await;
     }
@@ -345,6 +347,7 @@ async fn finalize_chat_items(
                     namespace: None,
                     arguments: tool_call.arguments.clone(),
                     call_id,
+                    internal_chat_message_metadata_passthrough: None,
                 },
             )))
             .await;

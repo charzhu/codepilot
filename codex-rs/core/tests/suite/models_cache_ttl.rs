@@ -1,3 +1,4 @@
+use core_test_support::test_codex::local_selections;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -97,11 +98,11 @@ async fn renews_cache_ttl_on_matching_models_etag() -> Result<()> {
                 text: "hi".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
+            additional_context: Default::default(),
             thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
-                cwd: Some(test.cwd_path().to_path_buf()),
+                environments: Some(local_selections(test.config.cwd.clone())),
                 approval_policy: Some(codex_protocol::protocol::AskForApproval::Never),
                 sandbox_policy: Some(sandbox_policy),
                 permission_profile,
@@ -164,7 +165,7 @@ async fn uses_cache_when_version_matches() -> Result<()> {
             let cache = ModelsCache {
                 fetched_at: Utc::now(),
                 etag: None,
-                client_version: Some(client_version_to_whole()),
+                client_version: Some(format!("{}:models-cache-v3", client_version_to_whole())),
                 models: vec![cached_model],
             };
             let cache_path = home.join(CACHE_FILE);
@@ -351,6 +352,7 @@ fn test_remote_model(slug: &str, priority: i32) -> ModelInfo {
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
+        include_skills_usage_instructions: false,
         supports_reasoning_summaries: false,
         default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
@@ -364,10 +366,15 @@ fn test_remote_model(slug: &str, priority: i32) -> ModelInfo {
         context_window: Some(272_000),
         max_context_window: None,
         auto_compact_token_limit: None,
+        comp_hash: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        use_responses_lite: false,
+        auto_review_model_override: None,
+        tool_mode: None,
+        multi_agent_version: None,
     }
 }

@@ -101,7 +101,7 @@ pub(crate) fn build_chat_completions_request(
         }));
     }
 
-    for item in prompt.get_formatted_input() {
+    for item in prompt.get_formatted_input_for_request(/*use_responses_lite*/ false) {
         append_chat_message(&mut messages, &tool_names, item)?;
     }
 
@@ -186,7 +186,9 @@ fn append_chat_message(
                 }],
             }));
         }
-        ResponseItem::FunctionCallOutput { call_id, output }
+        ResponseItem::FunctionCallOutput {
+            call_id, output, ..
+        }
         | ResponseItem::CustomToolCallOutput {
             call_id, output, ..
         } => {
@@ -202,9 +204,11 @@ fn append_chat_message(
         | ResponseItem::ToolSearchOutput { .. }
         | ResponseItem::WebSearchCall { .. }
         | ResponseItem::ImageGenerationCall { .. }
-        | ResponseItem::CompactionTrigger
+        | ResponseItem::CompactionTrigger {}
         | ResponseItem::Compaction { .. }
         | ResponseItem::ContextCompaction { .. }
+        | ResponseItem::AdditionalTools { .. }
+        | ResponseItem::AgentMessage { .. }
         | ResponseItem::Other => {}
     }
     Ok(())
@@ -463,6 +467,7 @@ mod tests {
                 user_location: None,
                 search_context_size: None,
                 search_content_types: None,
+                index_gated_web_access: None,
             }],
             &mut names,
             &test_model_info(),
@@ -483,6 +488,7 @@ mod tests {
                         text: "run pwd".to_string(),
                     }],
                     phase: None,
+                    internal_chat_message_metadata_passthrough: None,
                 },
                 ResponseItem::FunctionCall {
                     id: Some("call_1".to_string()),
@@ -490,10 +496,13 @@ mod tests {
                     namespace: None,
                     arguments: "{\"command\":\"pwd\"}".to_string(),
                     call_id: "call_1".to_string(),
+                    internal_chat_message_metadata_passthrough: None,
                 },
                 ResponseItem::FunctionCallOutput {
+                    id: None,
                     call_id: "call_1".to_string(),
                     output: FunctionCallOutputPayload::from_text("C:\\repo".to_string()),
+                    internal_chat_message_metadata_passthrough: None,
                 },
             ],
             tools: vec![],
@@ -501,7 +510,6 @@ mod tests {
             base_instructions: BaseInstructions {
                 text: "You are helpful".to_string(),
             },
-            personality: None,
             output_schema: None,
             output_schema_strict: true,
         };
@@ -541,13 +549,13 @@ mod tests {
                     text: "write a detailed report".to_string(),
                 }],
                 phase: None,
+                internal_chat_message_metadata_passthrough: None,
             }],
             tools: vec![],
             parallel_tool_calls: false,
             base_instructions: BaseInstructions {
                 text: "You are helpful".to_string(),
             },
-            personality: None,
             output_schema: None,
             output_schema_strict: true,
         };
@@ -568,13 +576,13 @@ mod tests {
                     text: "write a detailed report".to_string(),
                 }],
                 phase: None,
+                internal_chat_message_metadata_passthrough: None,
             }],
             tools: vec![],
             parallel_tool_calls: false,
             base_instructions: BaseInstructions {
                 text: "You are helpful".to_string(),
             },
-            personality: None,
             output_schema: None,
             output_schema_strict: true,
         };

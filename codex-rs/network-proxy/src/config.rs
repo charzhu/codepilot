@@ -21,6 +21,13 @@ pub struct NetworkProxyConfig {
     pub network: NetworkProxySettings,
 }
 
+impl NetworkProxyConfig {
+    pub fn set_credential_broker_enabled(&mut self, enabled: bool) {
+        self.network.credential_broker = enabled;
+        self.network.mitm |= enabled;
+    }
+}
+
 /// Variant order encodes effective precedence for duplicate patterns:
 /// `None < Allow < Deny`, so deny wins over allow when entries conflict.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -107,7 +114,7 @@ impl NetworkDomainPermissions {
 #[serde(rename_all = "lowercase")]
 pub enum NetworkUnixSocketPermission {
     Allow,
-    None,
+    Deny,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -142,6 +149,10 @@ pub struct NetworkProxySettings {
     #[serde(default)]
     pub mitm: bool,
     #[serde(default)]
+    pub credential_broker: bool,
+    #[serde(default)]
+    pub dangerously_allow_plaintext_credential_injection: bool,
+    #[serde(default)]
     pub mitm_hooks: Vec<MitmHookConfig>,
 }
 
@@ -161,6 +172,8 @@ impl Default for NetworkProxySettings {
             unix_sockets: None,
             allow_local_binding: false,
             mitm: false,
+            credential_broker: false,
+            dangerously_allow_plaintext_credential_injection: false,
             mitm_hooks: Vec::new(),
         }
     }
@@ -276,7 +289,7 @@ impl NetworkProxySettings {
 pub enum NetworkMode {
     /// Limited (read-only) access: only GET/HEAD/OPTIONS are allowed for HTTP. HTTPS CONNECT is
     /// blocked unless MITM is enabled so the proxy can enforce method policy on inner requests.
-    /// SOCKS5 remains blocked in limited mode.
+    /// SOCKS5 UDP and non-HTTPS SOCKS5 TCP remain blocked in limited mode.
     Limited,
     /// Full network access: all HTTP methods are allowed. HTTPS CONNECTs are tunneled directly.
     /// MITM hooks do not currently make full mode enter MITM.
@@ -593,6 +606,8 @@ mod tests {
                 unix_sockets: None,
                 allow_local_binding: false,
                 mitm: false,
+                credential_broker: false,
+                dangerously_allow_plaintext_credential_injection: false,
                 mitm_hooks: Vec::new(),
             }
         );
@@ -658,6 +673,8 @@ mod tests {
                     "unix_sockets": null,
                     "allow_local_binding": false,
                     "mitm": false,
+                    "credential_broker": false,
+                    "dangerously_allow_plaintext_credential_injection": false,
                     "mitm_hooks": [],
                 }
             })

@@ -6,10 +6,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::path::PathBuf;
 
 use codex_config::McpServerConfig;
 use codex_config::RawMcpServerConfig;
+use codex_utils_path_uri::LegacyAppPathString;
 use serde::Deserialize;
 
 use crate::env::ExternalMcpEnv;
@@ -122,6 +122,7 @@ fn build_raw(
         bearer_token: None,
         bearer_token_env_var: None,
         environment_id: None,
+        auth: None,
         startup_timeout_sec: None,
         startup_timeout_ms: None,
         tool_timeout_sec: None,
@@ -152,7 +153,9 @@ fn build_raw(
                     .map(|(key, value)| (key, expander(&value)))
                     .collect()
             });
-            raw.cwd = server.cwd.map(|value| PathBuf::from(expander(&value)));
+            raw.cwd = server
+                .cwd
+                .map(|value| LegacyAppPathString::from_path(Path::new(&expander(&value))));
         }
         "http" | "sse" | "streamable-http" | "streamable_http" => {
             let url = server

@@ -5,162 +5,44 @@ mod timers;
 mod value;
 
 use std::collections::HashMap;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 use std::sync::OnceLock;
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 
+use codex_code_mode_protocol::CodeModeToolKind;
+use codex_code_mode_protocol::EnabledToolMetadata;
+use codex_code_mode_protocol::ExecuteRequest;
+use codex_code_mode_protocol::FunctionCallOutputContentItem;
+use codex_code_mode_protocol::enabled_tool_metadata;
 use codex_protocol::ToolName;
-use serde::Serialize;
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc;
 
-use crate::description::CodeModeToolKind;
-use crate::description::EnabledToolMetadata;
-use crate::description::ToolDefinition;
-use crate::description::enabled_tool_metadata;
-use crate::response::FunctionCallOutputContentItem;
+use crate::TaskFailureHandler;
 
-pub const DEFAULT_EXEC_YIELD_TIME_MS: u64 = 10_000;
-pub const DEFAULT_WAIT_YIELD_TIME_MS: u64 = 10_000;
-pub const DEFAULT_MAX_OUTPUT_TOKENS_PER_EXEC_CALL: usize = 10_000;
 const EXIT_SENTINEL: &str = "__codex_code_mode_exit__";
-
-#[derive(Clone, Debug)]
-pub struct ExecuteRequest {
-    /// Runtime cell id for this execution.
-    ///
-    /// Callers allocate this before execution so tracing, waits, and nested tool
-    /// calls can refer to the cell as soon as JavaScript starts.
-    pub cell_id: String,
-    pub tool_call_id: String,
-    pub enabled_tools: Vec<ToolDefinition>,
-    pub source: String,
-    pub stored_values: HashMap<String, JsonValue>,
-    pub yield_time_ms: Option<u64>,
-    pub max_output_tokens: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-pub struct WaitRequest {
-    pub cell_id: String,
-    pub yield_time_ms: u64,
-    pub terminate: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct WaitToPendingRequest {
-    pub cell_id: String,
-}
-
-/// Result of waiting on a code-mode cell.
-///
-/// The wrapped `RuntimeResponse` is the model-facing wait result. The enum
-/// variant carries the extra lifecycle provenance that `RuntimeResponse` cannot:
-/// a failed real cell and a missing-cell wait both use
-/// `RuntimeResponse::Result { error_text: Some(..), .. }`, but only the former
-/// should be treated as a code-cell lifecycle event.
-#[derive(Debug, PartialEq)]
-pub enum WaitOutcome {
-    /// The requested code cell was live when the wait command was accepted.
-    LiveCell(RuntimeResponse),
-    /// The requested code cell was not live.
-    MissingCell(RuntimeResponse),
-}
-
-/// Result of executing a code-mode cell until it either completes or reaches a
-/// quiescent pending state.
-#[derive(Debug, PartialEq)]
-pub enum ExecuteToPendingOutcome {
-    /// The cell is waiting for more runtime input after draining the runtime
-    /// input queue that was ready at the pending boundary.
-    Pending {
-        cell_id: String,
-        content_items: Vec<FunctionCallOutputContentItem>,
-        /// Runtime tool-call ids emitted before this paused execution frontier
-        /// sealed. Hosts can use these ids to drain their tool-call transport
-        /// before surfacing the pending boundary to callers.
-        pending_tool_call_ids: Vec<String>,
-    },
-    /// The cell reached a terminal runtime response before going pending.
-    Completed(RuntimeResponse),
-}
-
-/// Result of resuming a live code-mode cell until it completes or becomes
-/// quiescent again.
-#[derive(Debug, PartialEq)]
-pub enum WaitToPendingOutcome {
-    /// The requested code cell was live when the wait command was accepted.
-    LiveCell(ExecuteToPendingOutcome),
-    /// The requested code cell was not live.
-    MissingCell(RuntimeResponse),
-}
-
-impl From<WaitOutcome> for RuntimeResponse {
-    fn from(outcome: WaitOutcome) -> Self {
-        match outcome {
-            WaitOutcome::LiveCell(response) | WaitOutcome::MissingCell(response) => response,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Serialize)]
-pub enum RuntimeResponse {
-    Yielded {
-        cell_id: String,
-        content_items: Vec<FunctionCallOutputContentItem>,
-    },
-    Terminated {
-        cell_id: String,
-        content_items: Vec<FunctionCallOutputContentItem>,
-    },
-    Result {
-        cell_id: String,
-        content_items: Vec<FunctionCallOutputContentItem>,
-        stored_values: HashMap<String, JsonValue>,
-        error_text: Option<String>,
-    },
-}
-
-/// Nested tool request emitted by one code-mode cell.
-///
-/// Code mode owns the per-cell runtime id. Hosts should preserve it for
-/// provenance/debugging, but should still assign their own runtime tool call id
-/// if their tool-call graph requires globally unique ids.
-#[derive(Debug)]
-pub struct CodeModeNestedToolCall {
-    pub cell_id: String,
-    pub runtime_tool_call_id: String,
-    pub tool_name: ToolName,
-    pub tool_kind: CodeModeToolKind,
-    pub input: Option<JsonValue>,
-}
-
-#[derive(Debug)]
-pub(crate) enum TurnMessage {
-    ToolCall(CodeModeNestedToolCall),
-    Notify {
-        cell_id: String,
-        call_id: String,
-        text: String,
-    },
-}
 
 #[derive(Debug)]
 pub(crate) enum RuntimeCommand {
     ToolResponse { id: String, result: JsonValue },
     ToolError { id: String, error_text: String },
     TimeoutFired { id: u64 },
+    ObservePendingFrontier,
     Terminate,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum PendingRuntimeMode {
+    #[cfg(test)]
     Continue,
     PauseUntilResumed,
 }
 
 #[derive(Debug)]
 pub(crate) enum RuntimeControlCommand {
+    Continue,
     Resume,
     Terminate,
 }
@@ -182,15 +64,18 @@ pub(crate) enum RuntimeEvent {
         text: String,
     },
     Result {
-        stored_values: HashMap<String, JsonValue>,
+        stored_value_writes: HashMap<String, JsonValue>,
         error_text: Option<String>,
     },
+    ThreadPanicked,
 }
 
 pub(crate) fn spawn_runtime(
+    stored_values: HashMap<String, JsonValue>,
     request: ExecuteRequest,
     event_tx: mpsc::UnboundedSender<RuntimeEvent>,
     pending_mode: PendingRuntimeMode,
+    task_failure_handler: Option<TaskFailureHandler>,
 ) -> Result<
     (
         std_mpsc::Sender<RuntimeCommand>,
@@ -214,10 +99,10 @@ pub(crate) fn spawn_runtime(
         tool_call_id: request.tool_call_id,
         enabled_tools,
         source: request.source,
-        stored_values: request.stored_values,
+        stored_values,
     };
 
-    thread::spawn(move || {
+    spawn_supervised_runtime_thread(event_tx.clone(), task_failure_handler, move || {
         run_runtime(
             config,
             event_tx,
@@ -235,6 +120,21 @@ pub(crate) fn spawn_runtime(
     Ok((command_tx, control_tx, isolate_handle))
 }
 
+fn spawn_supervised_runtime_thread(
+    event_tx: mpsc::UnboundedSender<RuntimeEvent>,
+    task_failure_handler: Option<TaskFailureHandler>,
+    runtime: impl FnOnce() + Send + 'static,
+) {
+    thread::spawn(move || {
+        if catch_unwind(AssertUnwindSafe(runtime)).is_err() {
+            if let Some(task_failure_handler) = task_failure_handler {
+                task_failure_handler("code-mode V8 runtime thread panicked".to_string());
+            }
+            let _ = event_tx.send(RuntimeEvent::ThreadPanicked);
+        }
+    });
+}
+
 #[derive(Clone)]
 struct RuntimeConfig {
     tool_call_id: String,
@@ -248,6 +148,7 @@ pub(super) struct RuntimeState {
     pending_tool_calls: HashMap<String, v8::Global<v8::PromiseResolver>>,
     pending_timeouts: HashMap<u64, timers::ScheduledTimeout>,
     stored_values: HashMap<String, JsonValue>,
+    stored_value_writes: HashMap<String, JsonValue>,
     enabled_tools: Vec<EnabledToolMetadata>,
     next_tool_call_id: u64,
     next_timeout_id: u64,
@@ -259,7 +160,7 @@ pub(super) struct RuntimeState {
 pub(super) enum CompletionState {
     Pending,
     Completed {
-        stored_values: HashMap<String, JsonValue>,
+        stored_value_writes: HashMap<String, JsonValue>,
         error_text: Option<String>,
     },
 }
@@ -305,6 +206,7 @@ fn run_runtime(
         pending_tool_calls: HashMap::new(),
         pending_timeouts: HashMap::new(),
         stored_values: config.stored_values,
+        stored_value_writes: HashMap::new(),
         enabled_tools: config.enabled_tools,
         next_tool_call_id: 1,
         next_timeout_id: 1,
@@ -330,22 +232,19 @@ fn run_runtime(
 
     match module_loader::completion_state(scope, pending_promise.as_ref()) {
         CompletionState::Completed {
-            stored_values,
+            stored_value_writes,
             error_text,
         } => {
-            send_result(&event_tx, stored_values, error_text);
+            send_result(&event_tx, stored_value_writes, error_text);
             return;
         }
         CompletionState::Pending => {}
     }
 
     let mut pending_promise = pending_promise;
-    loop {
-        let Some(command) = next_runtime_command(&event_tx, &command_rx, &control_rx, pending_mode)
-        else {
-            break;
-        };
-
+    while let Some(command) =
+        next_runtime_command(&event_tx, &command_rx, &control_rx, pending_mode)
+    {
         match command {
             RuntimeCommand::Terminate => break,
             RuntimeCommand::ToolResponse { id, result } => {
@@ -370,15 +269,16 @@ fn run_runtime(
                     return;
                 }
             }
+            RuntimeCommand::ObservePendingFrontier => {}
         }
 
         scope.perform_microtask_checkpoint();
         match module_loader::completion_state(scope, pending_promise.as_ref()) {
             CompletionState::Completed {
-                stored_values,
+                stored_value_writes,
                 error_text,
             } => {
-                send_result(&event_tx, stored_values, error_text);
+                send_result(&event_tx, stored_value_writes, error_text);
                 return;
             }
             CompletionState::Pending => {}
@@ -408,8 +308,10 @@ fn next_runtime_command(
 
         let _ = event_tx.send(RuntimeEvent::Pending);
         match pending_mode {
+            #[cfg(test)]
             PendingRuntimeMode::Continue => return command_rx.recv().ok(),
             PendingRuntimeMode::PauseUntilResumed => match control_rx.recv().ok()? {
+                RuntimeControlCommand::Continue => return command_rx.recv().ok(),
                 RuntimeControlCommand::Resume => continue,
                 RuntimeControlCommand::Terminate => return Some(RuntimeCommand::Terminate),
             },
@@ -422,21 +324,21 @@ fn capture_scope_send_error(
     event_tx: &mpsc::UnboundedSender<RuntimeEvent>,
     error_text: Option<String>,
 ) {
-    let stored_values = scope
+    let stored_value_writes = scope
         .get_slot::<RuntimeState>()
-        .map(|state| state.stored_values.clone())
+        .map(|state| state.stored_value_writes.clone())
         .unwrap_or_default();
 
-    send_result(event_tx, stored_values, error_text);
+    send_result(event_tx, stored_value_writes, error_text);
 }
 
 fn send_result(
     event_tx: &mpsc::UnboundedSender<RuntimeEvent>,
-    stored_values: HashMap<String, JsonValue>,
+    stored_value_writes: HashMap<String, JsonValue>,
     error_text: Option<String>,
 ) {
     let _ = event_tx.send(RuntimeEvent::Result {
-        stored_values,
+        stored_value_writes,
         error_text,
     });
 }
@@ -455,27 +357,67 @@ mod tests {
     use super::RuntimeControlCommand;
     use super::RuntimeEvent;
     use super::spawn_runtime;
+    use super::spawn_supervised_runtime_thread;
     use crate::FunctionCallOutputContentItem;
 
     fn execute_request(source: &str) -> ExecuteRequest {
         ExecuteRequest {
-            cell_id: "1".to_string(),
             tool_call_id: "call_1".to_string(),
             enabled_tools: Vec::new(),
             source: source.to_string(),
-            stored_values: HashMap::new(),
             yield_time_ms: Some(1),
             max_output_tokens: None,
         }
     }
 
     #[tokio::test]
+    async fn runtime_thread_panic_before_initialization_is_reported_directly() {
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        drop(event_rx);
+        let (failure_tx, mut failure_rx) = mpsc::unbounded_channel();
+        spawn_supervised_runtime_thread(
+            event_tx,
+            Some(std::sync::Arc::new(move |reason| {
+                let _ = failure_tx.send(reason);
+            })),
+            || panic!("runtime thread panic probe"),
+        );
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), failure_rx.recv())
+                .await
+                .expect("runtime failure timeout")
+                .expect("runtime failure"),
+            "code-mode V8 runtime thread panicked"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_thread_panic_is_forwarded_without_owner_supervision() {
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        spawn_supervised_runtime_thread(
+            event_tx,
+            /*task_failure_handler*/ None,
+            || panic!("runtime thread panic probe"),
+        );
+
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+                .await
+                .expect("runtime panic event timeout"),
+            Some(RuntimeEvent::ThreadPanicked)
+        ));
+    }
+
+    #[tokio::test]
     async fn terminate_execution_stops_cpu_bound_module() {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let (_runtime_tx, _runtime_control_tx, runtime_terminate_handle) = spawn_runtime(
+            HashMap::new(),
             execute_request("while (true) {}"),
             event_tx,
             PendingRuntimeMode::Continue,
+            /*task_failure_handler*/ None,
         )
         .unwrap();
 
@@ -491,14 +433,9 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let RuntimeEvent::Result {
-            stored_values,
-            error_text,
-        } = result_event
-        else {
+        let RuntimeEvent::Result { error_text, .. } = result_event else {
             panic!("expected runtime result after termination");
         };
-        assert_eq!(stored_values, HashMap::new());
         assert!(error_text.is_some());
 
         assert!(
@@ -513,6 +450,7 @@ mod tests {
     async fn pending_mode_freezes_runtime_commands_until_resume() {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel();
         let (runtime_tx, runtime_control_tx, _runtime_terminate_handle) = spawn_runtime(
+            HashMap::new(),
             execute_request(
                 r#"
 await new Promise((resolve) => setTimeout(resolve, 60_000));
@@ -522,6 +460,7 @@ await new Promise(() => {});
             ),
             event_tx,
             PendingRuntimeMode::PauseUntilResumed,
+            /*task_failure_handler*/ None,
         )
         .unwrap();
 
@@ -544,7 +483,7 @@ await new Promise(() => {});
             .send(RuntimeCommand::TimeoutFired { id: 1 })
             .unwrap();
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), event_rx.recv())
+            tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
                 .await
                 .is_err()
         );

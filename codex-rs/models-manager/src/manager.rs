@@ -2,9 +2,8 @@ use super::cache::ModelsCacheManager;
 use crate::collaboration_mode_presets::builtin_collaboration_mode_presets;
 use crate::config::ModelsManagerConfig;
 use crate::model_info;
-use async_trait::async_trait;
-use codex_app_server_protocol::AuthMode;
 use codex_login::AuthManager;
+use codex_protocol::auth::AuthMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::error::Result as CoreResult;
 use codex_protocol::openai_models::ModelInfo;
@@ -12,7 +11,9 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ModelsResponse;
 use std::fmt;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -30,20 +31,21 @@ const MODEL_CACHE_SCHEMA_VERSION: u32 = 3;
 /// Implementations own provider-specific auth and transport details. The model
 /// manager owns refresh policy, cache behavior, and catalog merging; it calls
 /// this endpoint only when it decides a remote refresh should happen.
-#[async_trait]
 pub trait ModelsEndpointClient: fmt::Debug + Send + Sync {
     /// Returns whether this provider can authenticate command-scoped requests.
     fn has_command_auth(&self) -> bool;
 
     /// Returns whether the currently resolved auth can use Codex backend-only models.
-    async fn uses_codex_backend(&self) -> bool;
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool>;
 
     /// Fetches the latest remote model catalog and optional ETag.
-    async fn list_models(
-        &self,
-        client_version: &str,
-    ) -> CoreResult<(Vec<ModelInfo>, Option<String>)>;
+    fn list_models<'a>(
+        &'a self,
+        client_version: &'a str,
+    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>>;
 }
+
+pub type ModelsEndpointFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Strategy for refreshing available models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,28 +83,34 @@ enum RemoteCatalogPolicy {
 }
 
 /// Coordinates model discovery plus cached metadata on disk.
-#[async_trait]
 pub trait ModelsManager: fmt::Debug + Send + Sync {
     /// List all available models, refreshing according to the specified strategy.
     ///
     /// Returns model presets sorted by priority and filtered by auth mode and visibility.
-    async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
-        async move {
-            let catalog = self.raw_model_catalog(refresh_strategy).await;
-            self.build_available_models(catalog.models)
-        }
-        .instrument(tracing::info_span!(
-            "list_models",
-            refresh_strategy = %refresh_strategy
-        ))
-        .await
+    fn list_models(
+        &self,
+        refresh_strategy: RefreshStrategy,
+    ) -> ModelsManagerFuture<'_, Vec<ModelPreset>> {
+        Box::pin(
+            async move {
+                let catalog = self.raw_model_catalog(refresh_strategy).await;
+                self.build_available_models(catalog.models)
+            }
+            .instrument(tracing::info_span!(
+                "list_models",
+                refresh_strategy = %refresh_strategy
+            )),
+        )
     }
 
     /// Return the active raw model catalog, refreshing according to the specified strategy.
-    async fn raw_model_catalog(&self, refresh_strategy: RefreshStrategy) -> ModelsResponse;
+    fn raw_model_catalog(
+        &self,
+        refresh_strategy: RefreshStrategy,
+    ) -> ModelsManagerFuture<'_, ModelsResponse>;
 
     /// Return the current in-memory remote model catalog without refreshing or loading cache state.
-    async fn get_remote_models(&self) -> Vec<ModelInfo>;
+    fn get_remote_models(&self) -> ModelsManagerFuture<'_, Vec<ModelInfo>>;
 
     /// Attempt to return the current in-memory remote model catalog without blocking.
     ///
@@ -114,7 +122,7 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
 
     /// Build picker-ready presets from the active catalog snapshot.
     fn build_available_models(&self, mut remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
-        remote_models.sort_by(|a, b| a.priority.cmp(&b.priority));
+        remote_models.sort_by_key(|model| model.priority);
 
         let mut presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
         let uses_codex_backend = self
@@ -143,43 +151,54 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
     // todo(aibrahim): should be visible to core only and sent on session_configured event
     /// Get the model identifier to use, refreshing according to the specified strategy.
     ///
-    /// If `model` is provided, returns it directly. Otherwise selects the default based on
-    /// auth mode and available models.
-    async fn get_default_model(
-        &self,
-        model: &Option<String>,
+    /// If `model` is provided, preserves it unless the implementation supports and the policy
+    /// allows provider fallback. Otherwise selects the default based on auth mode and available
+    /// models.
+    fn get_default_model<'a>(
+        &'a self,
+        model: &'a Option<String>,
+        allow_provider_model_fallback: bool,
         refresh_strategy: RefreshStrategy,
-    ) -> String {
-        async move {
-            if let Some(model) = model.as_ref() {
-                return model.to_string();
+    ) -> ModelsManagerFuture<'a, String> {
+        Box::pin(
+            async move {
+                if let Some(model) = model.as_ref() {
+                    return model.to_string();
+                }
+                default_model_from_available(self.list_models(refresh_strategy).await)
             }
-            default_model_from_available(self.list_models(refresh_strategy).await)
-        }
-        .instrument(tracing::info_span!(
-            "get_default_model",
-            model.provided = model.is_some(),
-            refresh_strategy = %refresh_strategy
-        ))
-        .await
+            .instrument(tracing::info_span!(
+                "get_default_model",
+                model.provided = model.is_some(),
+                allow_provider_model_fallback,
+                refresh_strategy = %refresh_strategy
+            )),
+        )
     }
 
     // todo(aibrahim): look if we can tighten it to pub(crate)
     /// Look up model metadata, applying remote overrides and config adjustments.
-    async fn get_model_info(&self, model: &str, config: &ModelsManagerConfig) -> ModelInfo {
-        async move {
-            let remote_models = self.get_remote_models().await;
-            construct_model_info_from_candidates(model, &remote_models, config)
-        }
-        .instrument(tracing::info_span!("get_model_info", model = model))
-        .await
+    fn get_model_info<'a>(
+        &'a self,
+        model: &'a str,
+        config: &'a ModelsManagerConfig,
+    ) -> ModelsManagerFuture<'a, ModelInfo> {
+        Box::pin(
+            async move {
+                let remote_models = self.get_remote_models().await;
+                construct_model_info_from_candidates(model, &remote_models, config)
+            }
+            .instrument(tracing::info_span!("get_model_info", model = model)),
+        )
     }
 
     /// Refresh models if the provided ETag differs from the cached ETag.
     ///
     /// Uses `Online` strategy to fetch latest models when ETags differ.
-    async fn refresh_if_new_etag(&self, etag: String);
+    fn refresh_if_new_etag(&self, etag: String) -> ModelsManagerFuture<'_, ()>;
 }
+
+pub type ModelsManagerFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Shared model manager handle used across runtime services.
 pub type SharedModelsManager = Arc<dyn ModelsManager>;
@@ -255,19 +274,19 @@ impl StaticModelsManager {
     }
 }
 
-#[async_trait]
 impl ModelsManager for OpenAiModelsManager {
-    async fn raw_model_catalog(&self, refresh_strategy: RefreshStrategy) -> ModelsResponse {
-        if let Err(err) = self.refresh_available_models(refresh_strategy).await {
-            error!("failed to refresh available models: {err}");
-        }
-        ModelsResponse {
-            models: self.get_remote_models().await,
-        }
+    fn raw_model_catalog(
+        &self,
+        refresh_strategy: RefreshStrategy,
+    ) -> ModelsManagerFuture<'_, ModelsResponse> {
+        Box::pin(OpenAiModelsManager::raw_model_catalog(
+            self,
+            refresh_strategy,
+        ))
     }
 
-    async fn get_remote_models(&self) -> Vec<ModelInfo> {
-        self.remote_models.read().await.clone()
+    fn get_remote_models(&self) -> ModelsManagerFuture<'_, Vec<ModelInfo>> {
+        Box::pin(async move { self.remote_models.read().await.clone() })
     }
 
     fn try_get_remote_models(&self) -> Result<Vec<ModelInfo>, TryLockError> {
@@ -282,6 +301,21 @@ impl ModelsManager for OpenAiModelsManager {
         builtin_collaboration_mode_presets()
     }
 
+    fn refresh_if_new_etag(&self, etag: String) -> ModelsManagerFuture<'_, ()> {
+        Box::pin(OpenAiModelsManager::refresh_if_new_etag(self, etag))
+    }
+}
+
+impl OpenAiModelsManager {
+    async fn raw_model_catalog(&self, refresh_strategy: RefreshStrategy) -> ModelsResponse {
+        if let Err(err) = self.refresh_available_models(refresh_strategy).await {
+            error!("failed to refresh available models: {err}");
+        }
+        ModelsResponse {
+            models: self.get_remote_models().await,
+        }
+    }
+
     async fn refresh_if_new_etag(&self, etag: String) {
         let current_etag = self.get_etag().await;
         if current_etag.clone().is_some() && current_etag.as_deref() == Some(etag.as_str()) {
@@ -294,9 +328,7 @@ impl ModelsManager for OpenAiModelsManager {
             error!("failed to refresh available models: {err}");
         }
     }
-}
 
-impl OpenAiModelsManager {
     /// Refresh available models according to the specified strategy.
     async fn refresh_available_models(&self, refresh_strategy: RefreshStrategy) -> CoreResult<()> {
         if !self.should_refresh_models().await {
@@ -366,10 +398,9 @@ impl OpenAiModelsManager {
                 .iter()
                 .any(|model| model.visibility == ModelVisibility::List)
             && self.auth_manager.as_ref().is_some_and(|auth_manager| {
-                matches!(
-                    auth_manager.auth_mode(),
-                    Some(AuthMode::Chatgpt | AuthMode::ChatgptAuthTokens)
-                )
+                auth_manager
+                    .auth_mode()
+                    .is_some_and(AuthMode::has_chatgpt_account)
             });
         if should_use_remote_models_only {
             *self.remote_models.write().await = models;
@@ -415,16 +446,53 @@ impl OpenAiModelsManager {
     }
 }
 
-#[async_trait]
 impl ModelsManager for StaticModelsManager {
-    async fn raw_model_catalog(&self, _refresh_strategy: RefreshStrategy) -> ModelsResponse {
-        ModelsResponse {
-            models: self.get_remote_models().await,
-        }
+    fn get_default_model<'a>(
+        &'a self,
+        model: &'a Option<String>,
+        allow_provider_model_fallback: bool,
+        refresh_strategy: RefreshStrategy,
+    ) -> ModelsManagerFuture<'a, String> {
+        Box::pin(
+            async move {
+                let available_models = self.list_models(refresh_strategy).await;
+                let requested_model = model.as_deref();
+
+                if allow_provider_model_fallback {
+                    if requested_model_is_available(requested_model, &available_models)
+                        && let Some(requested_model) = requested_model
+                    {
+                        return requested_model.to_string();
+                    }
+                    return default_model_from_available(available_models);
+                }
+
+                model
+                    .clone()
+                    .unwrap_or_else(|| default_model_from_available(available_models))
+            }
+            .instrument(tracing::info_span!(
+                "get_default_model",
+                model.provided = model.is_some(),
+                allow_provider_model_fallback,
+                refresh_strategy = %refresh_strategy
+            )),
+        )
     }
 
-    async fn get_remote_models(&self) -> Vec<ModelInfo> {
-        self.remote_models.clone()
+    fn raw_model_catalog(
+        &self,
+        _refresh_strategy: RefreshStrategy,
+    ) -> ModelsManagerFuture<'_, ModelsResponse> {
+        Box::pin(async move {
+            ModelsResponse {
+                models: self.get_remote_models().await,
+            }
+        })
+    }
+
+    fn get_remote_models(&self) -> ModelsManagerFuture<'_, Vec<ModelInfo>> {
+        Box::pin(async { self.remote_models.clone() })
     }
 
     fn try_get_remote_models(&self) -> Result<Vec<ModelInfo>, TryLockError> {
@@ -439,7 +507,9 @@ impl ModelsManager for StaticModelsManager {
         builtin_collaboration_mode_presets()
     }
 
-    async fn refresh_if_new_etag(&self, _etag: String) {}
+    fn refresh_if_new_etag(&self, _etag: String) -> ModelsManagerFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 fn load_remote_models_from_file() -> Result<Vec<ModelInfo>, std::io::Error> {
@@ -479,6 +549,17 @@ fn default_model_from_available(available: Vec<ModelPreset>) -> String {
         .or_else(|| available.first())
         .map(|model| model.model.clone())
         .unwrap_or_default()
+}
+
+fn requested_model_is_available(
+    requested_model: Option<&str>,
+    available_models: &[ModelPreset],
+) -> bool {
+    requested_model.is_some_and(|requested_model| {
+        available_models
+            .iter()
+            .any(|available_model| available_model.model == requested_model)
+    })
 }
 
 fn find_model_by_longest_prefix(model: &str, candidates: &[ModelInfo]) -> Option<ModelInfo> {

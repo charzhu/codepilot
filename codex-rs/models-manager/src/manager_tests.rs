@@ -1,14 +1,15 @@
 use super::*;
 use crate::ModelsManagerConfig;
 use chrono::Utc;
-use codex_app_server_protocol::AuthMode;
 use codex_login::AuthCredentialsStoreMode;
+use codex_login::AuthKeyringBackendKind;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::ExternalAuth;
 use codex_login::ExternalAuthRefreshContext;
 use codex_login::ExternalAuthTokens;
 use codex_login::TokenData;
+use codex_protocol::auth::AuthMode;
 use codex_protocol::openai_models::ModelsResponse;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -100,64 +101,8 @@ impl TestModelsEndpoint {
     fn fetch_count(&self) -> usize {
         self.fetch_count.load(Ordering::SeqCst)
     }
-}
 
-#[derive(Debug)]
-struct TestExternalApiKeyAuth;
-
-#[async_trait]
-impl ExternalAuth for TestExternalApiKeyAuth {
-    fn auth_mode(&self) -> AuthMode {
-        AuthMode::ApiKey
-    }
-
-    async fn resolve(&self) -> std::io::Result<Option<ExternalAuthTokens>> {
-        Ok(Some(ExternalAuthTokens::access_token_only(
-            "test-external-api-key",
-        )))
-    }
-
-    async fn refresh(
-        &self,
-        _context: ExternalAuthRefreshContext,
-    ) -> std::io::Result<ExternalAuthTokens> {
-        Ok(ExternalAuthTokens::access_token_only(
-            "test-external-api-key",
-        ))
-    }
-}
-
-#[derive(Debug)]
-struct TestUnresolvedExternalApiKeyAuth;
-
-#[async_trait]
-impl ExternalAuth for TestUnresolvedExternalApiKeyAuth {
-    fn auth_mode(&self) -> AuthMode {
-        AuthMode::ApiKey
-    }
-
-    async fn refresh(
-        &self,
-        _context: ExternalAuthRefreshContext,
-    ) -> std::io::Result<ExternalAuthTokens> {
-        Err(std::io::Error::other("unresolved test auth"))
-    }
-}
-
-#[async_trait]
-impl ModelsEndpointClient for TestModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        self.has_command_auth
-    }
-
-    async fn uses_codex_backend(&self) -> bool {
-        self.uses_codex_backend
-    }
-
-    async fn list_models(
-        &self,
-        _client_version: &str,
-    ) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
+    async fn list_models(&self) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
         self.fetch_count.fetch_add(1, Ordering::SeqCst);
         let models = self
             .responses
@@ -166,6 +111,67 @@ impl ModelsEndpointClient for TestModelsEndpoint {
             .pop_front()
             .unwrap_or_default();
         Ok((models, None))
+    }
+}
+
+#[derive(Debug)]
+struct TestExternalApiKeyAuth;
+
+impl ExternalAuth for TestExternalApiKeyAuth {
+    fn auth_mode(&self) -> AuthMode {
+        AuthMode::ApiKey
+    }
+
+    fn resolve(&self) -> codex_login::ExternalAuthFuture<'_, Option<ExternalAuthTokens>> {
+        Box::pin(async {
+            Ok(Some(ExternalAuthTokens::access_token_only(
+                "test-external-api-key",
+            )))
+        })
+    }
+
+    fn refresh(
+        &self,
+        _context: ExternalAuthRefreshContext,
+    ) -> codex_login::ExternalAuthFuture<'_, ExternalAuthTokens> {
+        Box::pin(async {
+            Ok(ExternalAuthTokens::access_token_only(
+                "test-external-api-key",
+            ))
+        })
+    }
+}
+
+#[derive(Debug)]
+struct TestUnresolvedExternalApiKeyAuth;
+
+impl ExternalAuth for TestUnresolvedExternalApiKeyAuth {
+    fn auth_mode(&self) -> AuthMode {
+        AuthMode::ApiKey
+    }
+
+    fn refresh(
+        &self,
+        _context: ExternalAuthRefreshContext,
+    ) -> codex_login::ExternalAuthFuture<'_, ExternalAuthTokens> {
+        Box::pin(async { Err(std::io::Error::other("unresolved test auth")) })
+    }
+}
+
+impl ModelsEndpointClient for TestModelsEndpoint {
+    fn has_command_auth(&self) -> bool {
+        self.has_command_auth
+    }
+
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+        Box::pin(async { self.uses_codex_backend })
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        _client_version: &'a str,
+    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+        Box::pin(TestModelsEndpoint::list_models(self))
     }
 }
 
@@ -211,6 +217,8 @@ c2ln",
         }),
         last_refresh: Some(Utc::now()),
         agent_identity: None,
+        personal_access_token: None,
+        bedrock_api_key: None,
     };
     std::fs::create_dir_all(codex_home).expect("codex home should be created");
     std::fs::write(
@@ -223,10 +231,111 @@ c2ln",
         codex_home,
         AuthCredentialsStoreMode::File,
         /*chatgpt_base_url*/ None,
+        AuthKeyringBackendKind::default(),
+        /*auth_route_config*/ None,
     )
     .await
     .expect("auth should load")
     .expect("auth should be present")
+}
+
+#[tokio::test]
+async fn static_manager_preserves_supported_requested_model_when_fallback_is_allowed() {
+    let manager = static_manager_for_tests(ModelsResponse {
+        models: vec![
+            remote_model("provider-default", "Default", /*priority*/ 0),
+            remote_model("provider-supported", "Supported", /*priority*/ 1),
+        ],
+    });
+    let requested_model = Some("provider-supported".to_string());
+
+    let model = manager
+        .get_default_model(
+            &requested_model,
+            /*allow_provider_model_fallback*/ true,
+            RefreshStrategy::Offline,
+        )
+        .await;
+
+    assert_eq!(model, "provider-supported");
+}
+
+#[tokio::test]
+async fn static_manager_falls_back_from_unsupported_requested_model_when_allowed() {
+    let manager = static_manager_for_tests(ModelsResponse {
+        models: vec![
+            remote_model("provider-default", "Default", /*priority*/ 0),
+            remote_model("provider-supported", "Supported", /*priority*/ 1),
+        ],
+    });
+    let requested_model = Some("unsupported".to_string());
+
+    let model = manager
+        .get_default_model(
+            &requested_model,
+            /*allow_provider_model_fallback*/ true,
+            RefreshStrategy::Offline,
+        )
+        .await;
+
+    assert_eq!(model, "provider-default");
+}
+
+#[tokio::test]
+async fn static_manager_preserves_unsupported_requested_model_when_fallback_is_disabled() {
+    let manager = static_manager_for_tests(ModelsResponse {
+        models: vec![remote_model(
+            "provider-default",
+            "Default",
+            /*priority*/ 0,
+        )],
+    });
+    let requested_model = Some("unsupported".to_string());
+
+    let model = manager
+        .get_default_model(
+            &requested_model,
+            /*allow_provider_model_fallback*/ false,
+            RefreshStrategy::Offline,
+        )
+        .await;
+
+    assert_eq!(model, "unsupported");
+}
+
+#[tokio::test]
+async fn static_manager_uses_empty_default_when_fallback_is_allowed_and_catalog_is_empty() {
+    let manager = static_manager_for_tests(ModelsResponse { models: Vec::new() });
+    let requested_model = Some("unsupported".to_string());
+
+    let model = manager
+        .get_default_model(
+            &requested_model,
+            /*allow_provider_model_fallback*/ true,
+            RefreshStrategy::Offline,
+        )
+        .await;
+
+    assert_eq!(model, "");
+}
+
+#[tokio::test]
+async fn dynamic_manager_preserves_requested_model_when_fallback_is_allowed() {
+    let codex_home = tempdir().expect("temp dir");
+    let endpoint = TestModelsEndpoint::new(Vec::new());
+    let manager = openai_manager_for_tests(codex_home.path().to_path_buf(), endpoint.clone());
+    let requested_model = Some("unsupported".to_string());
+
+    let model = manager
+        .get_default_model(
+            &requested_model,
+            /*allow_provider_model_fallback*/ true,
+            RefreshStrategy::Online,
+        )
+        .await;
+
+    assert_eq!(model, "unsupported");
+    assert_eq!(endpoint.fetch_count(), 0);
 }
 
 #[tokio::test]
@@ -816,13 +925,6 @@ impl TestAuthAwareModelsEndpoint {
     fn fetch_count(&self) -> usize {
         self.fetch_count.load(Ordering::SeqCst)
     }
-}
-
-#[async_trait]
-impl ModelsEndpointClient for TestAuthAwareModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        false
-    }
 
     async fn uses_codex_backend(&self) -> bool {
         match self.auth_manager.as_ref() {
@@ -835,10 +937,7 @@ impl ModelsEndpointClient for TestAuthAwareModelsEndpoint {
         }
     }
 
-    async fn list_models(
-        &self,
-        _client_version: &str,
-    ) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
+    async fn list_models(&self) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
         self.fetch_count.fetch_add(1, Ordering::SeqCst);
         let models = self
             .responses
@@ -847,6 +946,23 @@ impl ModelsEndpointClient for TestAuthAwareModelsEndpoint {
             .pop_front()
             .unwrap_or_default();
         Ok((models, None))
+    }
+}
+
+impl ModelsEndpointClient for TestAuthAwareModelsEndpoint {
+    fn has_command_auth(&self) -> bool {
+        false
+    }
+
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+        Box::pin(TestAuthAwareModelsEndpoint::uses_codex_backend(self))
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        _client_version: &'a str,
+    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+        Box::pin(TestAuthAwareModelsEndpoint::list_models(self))
     }
 }
 

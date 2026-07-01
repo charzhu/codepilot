@@ -8,6 +8,7 @@ use crate::requests::headers::insert_header;
 use crate::requests::headers::subagent_header;
 use crate::sse::spawn_chat_completions_stream;
 use crate::telemetry::SseTelemetry;
+use codex_client::EncodedJsonBody;
 use codex_client::HttpTransport;
 use codex_client::RequestTelemetry;
 use codex_protocol::protocol::SessionSource;
@@ -81,9 +82,12 @@ impl<T: HttpTransport> ChatCompletionsClient<T> {
             insert_header(&mut headers, "x-openai-subagent", &subagent);
         }
 
+        let body = EncodedJsonBody::encode(&body).map_err(|e| {
+            ApiError::Stream(format!("failed to encode chat completions request: {e}"))
+        })?;
         let stream_response = self
             .session
-            .stream_with(
+            .stream_encoded_json_with(
                 Method::POST,
                 "chat/completions",
                 headers,

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use codex_api::Provider;
 use codex_api::SharedAuthProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
@@ -11,6 +11,7 @@ use codex_login::github_copilot_storage::load_github_copilot_auth;
 use codex_model_provider_info::GITHUB_COPILOT_PROVIDER_ID;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::manager::ModelsEndpointClient;
+use codex_models_manager::manager::ModelsEndpointFuture;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
 use codex_models_manager::manager::StaticModelsManager;
@@ -32,6 +33,7 @@ use std::str::FromStr;
 
 use crate::auth::resolve_provider_auth;
 use crate::provider::ModelProvider;
+use crate::provider::ModelProviderFuture;
 use crate::provider::ProviderAccountResult;
 use crate::provider::ProviderAccountState;
 use crate::provider::ProviderCapabilities;
@@ -68,25 +70,6 @@ impl GitHubCopilotModelProvider {
             .flatten()
             .map(|auth| auth.api_base_url)
     }
-}
-
-#[async_trait]
-impl ModelProvider for GitHubCopilotModelProvider {
-    fn info(&self) -> &ModelProviderInfo {
-        &self.info
-    }
-
-    fn capabilities(&self) -> ProviderCapabilities {
-        ProviderCapabilities {
-            namespace_tools: true,
-            image_generation: false,
-            web_search: true,
-        }
-    }
-
-    fn auth_manager(&self) -> Option<Arc<AuthManager>> {
-        self.auth_manager.clone()
-    }
 
     async fn auth(&self) -> Option<CodexAuth> {
         match self.auth_manager.as_ref() {
@@ -105,19 +88,6 @@ impl ModelProvider for GitHubCopilotModelProvider {
         resolve_provider_auth(Some(&auth), &self.info)
     }
 
-    fn account_state(&self) -> ProviderAccountResult {
-        let account = self
-            .auth_manager
-            .as_ref()
-            .and_then(|auth_manager| load_github_copilot_auth(auth_manager.codex_home()).ok())
-            .flatten()
-            .map(|_| ProviderAccount::GitHubCopilot);
-        Ok(ProviderAccountState {
-            account,
-            requires_openai_auth: false,
-        })
-    }
-
     async fn api_provider(&self) -> CoreResult<codex_api::Provider> {
         let auth = self.auth().await;
         let mut provider = self
@@ -134,6 +104,57 @@ impl ModelProvider for GitHubCopilotModelProvider {
             .token_base_url()
             .await
             .or_else(|| self.info.base_url.clone()))
+    }
+}
+
+impl ModelProvider for GitHubCopilotModelProvider {
+    fn info(&self) -> &ModelProviderInfo {
+        &self.info
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            namespace_tools: true,
+            image_generation: false,
+            web_search: true,
+        }
+    }
+
+    fn auth_manager(&self) -> Option<Arc<AuthManager>> {
+        self.auth_manager.clone()
+    }
+
+    fn auth(&self) -> ModelProviderFuture<'_, Option<CodexAuth>> {
+        Box::pin(GitHubCopilotModelProvider::auth(self))
+    }
+
+    fn api_auth(
+        &self,
+    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<SharedAuthProvider>> {
+        Box::pin(GitHubCopilotModelProvider::api_auth(self))
+    }
+
+    fn account_state(&self) -> ProviderAccountResult {
+        let account = self
+            .auth_manager
+            .as_ref()
+            .and_then(|auth_manager| load_github_copilot_auth(auth_manager.codex_home()).ok())
+            .flatten()
+            .map(|_| ProviderAccount::GitHubCopilot);
+        Ok(ProviderAccountState {
+            account,
+            requires_openai_auth: false,
+        })
+    }
+
+    fn api_provider(&self) -> ModelProviderFuture<'_, codex_protocol::error::Result<Provider>> {
+        Box::pin(GitHubCopilotModelProvider::api_provider(self))
+    }
+
+    fn runtime_base_url(
+        &self,
+    ) -> ModelProviderFuture<'_, codex_protocol::error::Result<Option<String>>> {
+        Box::pin(GitHubCopilotModelProvider::runtime_base_url(self))
     }
 
     fn models_manager(
@@ -194,13 +215,6 @@ impl GitHubCopilotModelsEndpoint {
             codex_model_provider_info::GITHUB_COPILOT_DEFAULT_BASE_URL.to_string()
         })
     }
-}
-
-#[async_trait]
-impl ModelsEndpointClient for GitHubCopilotModelsEndpoint {
-    fn has_command_auth(&self) -> bool {
-        false
-    }
 
     async fn uses_codex_backend(&self) -> bool {
         false
@@ -254,6 +268,26 @@ impl ModelsEndpointClient for GitHubCopilotModelsEndpoint {
             .filter_map(|(index, model)| model.into_model_info(index as i32))
             .collect();
         Ok((models, etag))
+    }
+}
+
+impl ModelsEndpointClient for GitHubCopilotModelsEndpoint {
+    fn has_command_auth(&self) -> bool {
+        false
+    }
+
+    fn uses_codex_backend(&self) -> ModelsEndpointFuture<'_, bool> {
+        Box::pin(GitHubCopilotModelsEndpoint::uses_codex_backend(self))
+    }
+
+    fn list_models<'a>(
+        &'a self,
+        client_version: &'a str,
+    ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
+        Box::pin(GitHubCopilotModelsEndpoint::list_models(
+            self,
+            client_version,
+        ))
     }
 }
 
@@ -630,8 +664,8 @@ fn reasoning_efforts(capabilities: Option<&Value>) -> Vec<ReasoningEffortPreset>
             continue;
         }
         efforts.push(ReasoningEffortPreset {
-            effort,
             description: effort.to_string(),
+            effort: effort.clone(),
         });
     }
     efforts
@@ -645,7 +679,7 @@ fn default_reasoning_effort(supported: &[ReasoningEffortPreset]) -> Option<Reaso
         .iter()
         .find(|preset| preset.effort == ReasoningEffort::Medium)
         .or_else(|| supported.first())
-        .map(|preset| preset.effort)
+        .map(|preset| preset.effort.clone())
 }
 fn first_i64_at_any(value: &Value, paths: &[&[&str]]) -> Option<i64> {
     paths
@@ -772,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_unknown_copilot_reasoning_efforts() {
+    fn accepts_unknown_copilot_reasoning_efforts_as_custom() {
         let model: CopilotModel = serde_json::from_value(json!({
             "id": "gpt-5.4-mini",
             "model_picker_enabled": true,
@@ -791,10 +825,16 @@ mod tests {
         assert_eq!(info.default_reasoning_level, Some(ReasoningEffort::Medium));
         assert_eq!(
             info.supported_reasoning_levels,
-            vec![ReasoningEffortPreset {
-                effort: ReasoningEffort::Medium,
-                description: "medium".to_string()
-            }]
+            vec![
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Medium,
+                    description: "medium".to_string()
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Custom("turbo".to_string()),
+                    description: "turbo".to_string()
+                }
+            ]
         );
     }
     #[test]

@@ -313,6 +313,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
+    use codex_config::McpServerAuth;
     use codex_config::McpServerConfig;
     use codex_config::McpServerTransportConfig;
     use pretty_assertions::assert_eq;
@@ -327,6 +328,7 @@ mod tests {
                 http_headers: None,
                 env_http_headers: None,
             },
+            auth: McpServerAuth::default(),
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
             required: false,
@@ -361,6 +363,7 @@ mod tests {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            auth: McpServerAuth::default(),
             environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
             enabled: true,
             required: false,

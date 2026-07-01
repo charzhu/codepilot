@@ -31,7 +31,9 @@ use core_test_support::responses::sse;
 use core_test_support::responses::sse_completed;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_wine_exec;
 use core_test_support::test_codex::TestCodex;
+use core_test_support::test_codex::local_selections;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
@@ -45,11 +47,11 @@ fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -
         turn_permission_fields(PermissionProfile::read_only(), test.cwd_path());
     Op::UserInput {
         items,
-        environments: None,
         final_output_json_schema: None,
         responsesapi_client_metadata: None,
+        additional_context: Default::default(),
         thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
-            cwd: Some(test.cwd_path().to_path_buf()),
+            environments: Some(local_selections(test.config.cwd.clone())),
             approval_policy: Some(AskForApproval::Never),
             sandbox_policy: Some(sandbox_policy),
             permission_profile,
@@ -57,7 +59,7 @@ fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -
                 mode: codex_protocol::config_types::ModeKind::Default,
                 settings: codex_protocol::config_types::Settings {
                     model,
-                    reasoning_effort: test.config.model_reasoning_effort,
+                    reasoning_effort: test.config.model_reasoning_effort.clone(),
                     developer_instructions: None,
                 },
             }),
@@ -111,6 +113,10 @@ fn test_model_info(
         input_modalities,
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        use_responses_lite: false,
+        auto_review_model_override: None,
+        tool_mode: None,
+        multi_agent_version: None,
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
@@ -118,6 +124,7 @@ fn test_model_info(
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
+        include_skills_usage_instructions: false,
         supports_reasoning_summaries: false,
         default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
@@ -131,6 +138,7 @@ fn test_model_info(
         context_window: Some(272_000),
         max_context_window: None,
         auto_compact_token_limit: None,
+        comp_hash: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
     }
@@ -500,7 +508,7 @@ async fn model_change_from_image_to_text_strips_prior_image_content() -> Result<
     let _ = models_manager
         .list_models(RefreshStrategy::OnlineIfUncached)
         .await;
-    let image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+    let image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
         .to_string();
 
     test.codex
@@ -554,19 +562,6 @@ async fn model_change_from_image_to_text_strips_prior_image_content() -> Result<
             .any(|text| text == "image content omitted because you do not support image input"),
         "second request should include the image-omitted placeholder text"
     );
-    assert!(
-        second_user_texts
-            .iter()
-            .any(|text| text == &codex_protocol::models::image_open_tag_text()),
-        "second request should preserve the image open tag text"
-    );
-    assert!(
-        second_user_texts
-            .iter()
-            .any(|text| text == &codex_protocol::models::image_close_tag_text()),
-        "second request should preserve the image close tag text"
-    );
-
     Ok(())
 }
 
@@ -656,8 +651,8 @@ async fn generated_image_is_replayed_for_image_capable_models() -> Result<()> {
     );
     assert_eq!(
         image_generation_calls[0]["id"].as_str(),
-        Some("ig_123"),
-        "expected the original image generation call id to be preserved"
+        None,
+        "expected the image generation call id to be omitted"
     );
     assert_eq!(
         image_generation_calls[0]["result"].as_str(),
@@ -773,8 +768,8 @@ async fn model_change_from_generated_image_to_text_preserves_prior_generated_ima
     );
     assert_eq!(
         image_generation_calls[0]["id"].as_str(),
-        Some("ig_123"),
-        "second request should preserve the original generated image call id"
+        None,
+        "second request should omit the generated image call id"
     );
     assert_eq!(
         image_generation_calls[0]["result"].as_str(),
@@ -802,6 +797,8 @@ async fn model_change_from_generated_image_to_text_preserves_prior_generated_ima
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn thread_rollback_after_generated_image_drops_entire_image_turn_history() -> Result<()> {
+    // TODO(anp): Remove after generated-image artifacts use target-native paths.
+    skip_if_wine_exec!(Ok(()), "uses host-native generated-image artifact paths");
     skip_if_no_network!(Ok(()));
 
     let server = MockServer::start().await;
@@ -941,6 +938,10 @@ async fn model_switch_to_smaller_model_updates_token_context_window() -> Result<
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        use_responses_lite: false,
+        auto_review_model_override: None,
+        tool_mode: None,
+        multi_agent_version: None,
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
@@ -948,6 +949,7 @@ async fn model_switch_to_smaller_model_updates_token_context_window() -> Result<
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
+        include_skills_usage_instructions: false,
         supports_reasoning_summaries: false,
         default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
@@ -961,6 +963,7 @@ async fn model_switch_to_smaller_model_updates_token_context_window() -> Result<
         context_window: Some(large_context_window),
         max_context_window: None,
         auto_compact_token_limit: None,
+        comp_hash: None,
         effective_context_window_percent,
         experimental_supported_tools: Vec::new(),
     };

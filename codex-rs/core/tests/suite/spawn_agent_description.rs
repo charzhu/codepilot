@@ -1,5 +1,5 @@
 #![cfg(not(target_os = "windows"))]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used)]
 
 use anyhow::Result;
 use codex_features::Feature;
@@ -60,6 +60,10 @@ fn test_model_info(
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
+        use_responses_lite: false,
+        auto_review_model_override: None,
+        tool_mode: None,
+        multi_agent_version: None,
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers,
@@ -67,6 +71,7 @@ fn test_model_info(
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
+        include_skills_usage_instructions: false,
         supports_reasoning_summaries: false,
         default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
@@ -80,6 +85,7 @@ fn test_model_info(
         context_window: Some(272_000),
         max_context_window: None,
         auto_compact_token_limit: None,
+        comp_hash: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
     }
@@ -162,6 +168,7 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
                 .features
                 .enable(Feature::Collab)
                 .expect("test config should allow feature update");
+            config.multi_agent_v2.hide_spawn_agent_metadata = false;
         });
     let test = builder.build(&server).await?;
     wait_for_model_available(&test.thread_manager.get_models_manager(), "visible-model").await;
@@ -207,15 +214,15 @@ async fn spawn_agent_description_lists_visible_models_and_reasoning_efforts() ->
     );
     assert!(
         description.contains(
-            "Only use `spawn_agent` if and only if the user explicitly asks for sub-agents, delegation, or parallel agent work."
+            "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work."
         ),
         "expected explicit authorization rule in spawn_agent description: {description:?}"
     );
     assert!(
         description.contains(
             "Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn."
-        ),
-        "expected non-authorization clarification in spawn_agent description: {description:?}"
+        ) && description.contains("### When to delegate vs. do the subtask yourself"),
+        "expected delegation decision guidance in spawn_agent description: {description:?}"
     );
     assert!(
         description.contains(

@@ -4,12 +4,12 @@ use codex_app_server_protocol::AppConfig;
 use codex_app_server_protocol::AppToolApproval;
 use codex_app_server_protocol::AppsConfig;
 use codex_app_server_protocol::AskForApproval;
-use codex_config::CloudRequirementsLoader;
-use codex_config::FeatureRequirementsToml;
+use codex_app_server_protocol::ConfigLayerSource as ApiConfigLayerSource;
+use codex_config::CloudConfigBundleLoader;
 use codex_config::LoaderOverrides;
+use codex_config::test_support::CloudConfigBundleFixture;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
-use std::collections::BTreeMap;
 use tempfile::tempdir;
 
 #[test]
@@ -284,6 +284,7 @@ async fn write_value_supports_nested_app_paths() -> Result<()> {
                 "app1".to_string(),
                 AppConfig {
                     enabled: false,
+                    approvals_reviewer: None,
                     destructive_enabled: None,
                     open_world_enabled: None,
                     default_tools_approval_mode: Some(AppToolApproval::Prompt),
@@ -355,7 +356,7 @@ async fn read_includes_origins_and_layers() {
         tmp.path().to_path_buf(),
         vec![],
         LoaderOverrides::with_managed_config_path_for_tests(managed_path.clone()),
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     let response = service
@@ -374,7 +375,7 @@ async fn read_includes_origins_and_layers() {
             .get("approval_policy")
             .expect("origin")
             .name,
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile {
+        ApiConfigLayerSource::LegacyManagedConfigTomlFromFile {
             file: managed_file.clone()
         },
     );
@@ -383,7 +384,7 @@ async fn read_includes_origins_and_layers() {
     // top of the stack; ignore it so this test stays focused on file/user/system ordering.
     let layers = if matches!(
         layers.first().map(|layer| &layer.name),
-        Some(ConfigLayerSource::LegacyManagedConfigTomlFromMdm)
+        Some(ApiConfigLayerSource::LegacyManagedConfigTomlFromMdm)
     ) {
         &layers[1..]
     } else {
@@ -392,20 +393,20 @@ async fn read_includes_origins_and_layers() {
     assert_eq!(layers.len(), 3, "expected three layers");
     assert_eq!(
         layers.first().unwrap().name,
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile {
+        ApiConfigLayerSource::LegacyManagedConfigTomlFromFile {
             file: managed_file.clone()
         }
     );
     assert_eq!(
         layers.get(1).unwrap().name,
-        ConfigLayerSource::User {
+        ApiConfigLayerSource::User {
             file: user_file.clone(),
             profile: None,
         }
     );
     assert!(matches!(
         layers.get(2).unwrap().name,
-        ConfigLayerSource::System { .. }
+        ApiConfigLayerSource::System { .. }
     ));
 }
 
@@ -434,7 +435,7 @@ writable_roots = ["~/code"]
         tmp.path().to_path_buf(),
         vec![],
         loader_overrides,
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     let response = service
@@ -474,7 +475,7 @@ async fn write_value_reports_override() {
         tmp.path().to_path_buf(),
         vec![],
         LoaderOverrides::with_managed_config_path_for_tests(managed_path.clone()),
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     let result = service
@@ -505,7 +506,7 @@ async fn write_value_reports_override() {
             .get("approval_policy")
             .expect("origin")
             .name,
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile {
+        ApiConfigLayerSource::LegacyManagedConfigTomlFromFile {
             file: managed_file.clone()
         }
     );
@@ -577,7 +578,7 @@ async fn write_value_defaults_to_selected_user_config_path() {
         tmp.path().to_path_buf(),
         vec![],
         loader_overrides,
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
     service
         .write_value(ConfigValueWriteParams {
@@ -617,7 +618,7 @@ async fn load_default_config_preserves_selected_user_config_path_after_load_erro
         tmp.path().to_path_buf(),
         vec![],
         loader_overrides,
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     service
@@ -647,7 +648,7 @@ async fn invalid_user_value_rejected_even_if_overridden_by_managed() {
         tmp.path().to_path_buf(),
         vec![],
         LoaderOverrides::with_managed_config_path_for_tests(managed_path.clone()),
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     let error = service
@@ -707,14 +708,12 @@ async fn write_value_rejects_feature_requirement_conflict() {
         tmp.path().to_path_buf(),
         vec![],
         LoaderOverrides::without_managed_config_for_tests(),
-        CloudRequirementsLoader::new(async {
-            Ok(Some(ConfigRequirementsToml {
-                feature_requirements: Some(FeatureRequirementsToml {
-                    entries: BTreeMap::from([("personality".to_string(), true)]),
-                }),
-                ..Default::default()
-            }))
-        }),
+        CloudConfigBundleFixture::loader_with_enterprise_requirement(
+            r#"
+[features]
+personality = true
+"#,
+        ),
     );
 
     let error = service
@@ -764,7 +763,7 @@ async fn read_reports_managed_overrides_user_and_session_flags() {
         tmp.path().to_path_buf(),
         cli_overrides,
         LoaderOverrides::with_managed_config_path_for_tests(managed_path.clone()),
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     let response = service
@@ -778,7 +777,7 @@ async fn read_reports_managed_overrides_user_and_session_flags() {
     assert_eq!(response.config.model.as_deref(), Some("system"));
     assert_eq!(
         response.origins.get("model").expect("origin").name,
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile {
+        ApiConfigLayerSource::LegacyManagedConfigTomlFromFile {
             file: managed_file.clone()
         },
     );
@@ -787,7 +786,7 @@ async fn read_reports_managed_overrides_user_and_session_flags() {
     // top of the stack; ignore it so this test stays focused on file/session/user ordering.
     let layers = if matches!(
         layers.first().map(|layer| &layer.name),
-        Some(ConfigLayerSource::LegacyManagedConfigTomlFromMdm)
+        Some(ApiConfigLayerSource::LegacyManagedConfigTomlFromMdm)
     ) {
         &layers[1..]
     } else {
@@ -795,12 +794,15 @@ async fn read_reports_managed_overrides_user_and_session_flags() {
     };
     assert_eq!(
         layers.first().unwrap().name,
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile { file: managed_file }
+        ApiConfigLayerSource::LegacyManagedConfigTomlFromFile { file: managed_file }
     );
-    assert_eq!(layers.get(1).unwrap().name, ConfigLayerSource::SessionFlags);
+    assert_eq!(
+        layers.get(1).unwrap().name,
+        ApiConfigLayerSource::SessionFlags
+    );
     assert_eq!(
         layers.get(2).unwrap().name,
-        ConfigLayerSource::User {
+        ApiConfigLayerSource::User {
             file: user_file,
             profile: None
         }
@@ -820,7 +822,7 @@ async fn write_value_reports_managed_override() {
         tmp.path().to_path_buf(),
         vec![],
         LoaderOverrides::with_managed_config_path_for_tests(managed_path.clone()),
-        CloudRequirementsLoader::default(),
+        CloudConfigBundleLoader::default(),
     );
 
     let result = service
@@ -838,7 +840,7 @@ async fn write_value_reports_managed_override() {
     let overridden = result.overridden_metadata.expect("overridden metadata");
     assert_eq!(
         overridden.overriding_layer.name,
-        ConfigLayerSource::LegacyManagedConfigTomlFromFile { file: managed_file }
+        ApiConfigLayerSource::LegacyManagedConfigTomlFromFile { file: managed_file }
     );
     assert_eq!(overridden.effective_value, serde_json::json!("never"));
 }

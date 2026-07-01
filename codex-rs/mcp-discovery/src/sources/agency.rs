@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use codex_config::McpServerAuth;
 use codex_config::McpServerConfig;
 use codex_config::McpServerTransportConfig;
 
@@ -120,6 +121,7 @@ fn build_server(agency_exe: &str, name: &str, value: &toml::Value) -> Option<Mcp
             env_vars: Vec::new(),
             cwd: None,
         },
+        auth: McpServerAuth::default(),
         environment_id: codex_config::DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
         enabled: true,
         required: false,

@@ -456,8 +456,8 @@ impl OutgoingMessageSender {
     ) -> Vec<ServerRequest> {
         let request_id_to_callback = self.request_id_to_callback.lock().await;
         let mut requests = request_id_to_callback
-            .iter()
-            .filter_map(|(_, entry)| {
+            .values()
+            .filter_map(|entry| {
                 (entry.thread_id == Some(thread_id)).then_some(entry.request.clone())
             })
             .collect::<Vec<_>>();
@@ -504,7 +504,20 @@ impl OutgoingMessageSender {
     where
         T: Into<ClientResponsePayload>,
     {
-        self.send_response_as(request_id, response.into()).await;
+        self.send_response_as_inner(request_id, response.into(), /*thread_originator*/ None)
+            .await;
+    }
+
+    pub(crate) async fn send_response_with_thread_originator<T>(
+        &self,
+        request_id: ConnectionRequestId,
+        response: T,
+        thread_originator: String,
+    ) where
+        T: Into<ClientResponsePayload>,
+    {
+        self.send_response_as_inner(request_id, response.into(), Some(thread_originator))
+            .await;
     }
 
     pub(crate) async fn send_response_as(
@@ -512,17 +525,40 @@ impl OutgoingMessageSender {
         request_id: ConnectionRequestId,
         response: ClientResponsePayload,
     ) {
+        self.send_response_as_inner(request_id, response, /*thread_originator*/ None)
+            .await;
+    }
+
+    async fn send_response_as_inner(
+        &self,
+        request_id: ConnectionRequestId,
+        response: ClientResponsePayload,
+        thread_originator: Option<String>,
+    ) {
         let connection_id = request_id.connection_id;
         let request_id_for_analytics = request_id.request_id.clone();
         let serialized_response = response
             .into_jsonrpc_parts_and_payload(request_id.request_id.clone())
             .map(|(id, result, response)| {
                 if let Some(response) = response {
-                    self.analytics_events_client.track_response(
-                        connection_id.0,
-                        request_id_for_analytics,
-                        response,
-                    );
+                    match thread_originator {
+                        Some(thread_originator) => {
+                            self.analytics_events_client
+                                .track_response_with_thread_originator(
+                                    connection_id.0,
+                                    request_id_for_analytics,
+                                    response,
+                                    thread_originator,
+                                );
+                        }
+                        None => {
+                            self.analytics_events_client.track_response(
+                                connection_id.0,
+                                request_id_for_analytics,
+                                response,
+                            );
+                        }
+                    }
                 }
                 (id, result)
             });
@@ -715,6 +751,7 @@ mod tests {
     use codex_app_server_protocol::RateLimitWindow;
     use codex_app_server_protocol::ServerResponse;
     use codex_app_server_protocol::ToolRequestUserInputParams;
+    use codex_app_server_protocol::TurnModerationMetadataNotification;
     use codex_protocol::ThreadId;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -788,6 +825,7 @@ mod tests {
                     }),
                     secondary: None,
                     credits: None,
+                    individual_limit: None,
                     plan_type: Some(PlanType::Plus),
                     rate_limit_reached_type: None,
                 },
@@ -808,6 +846,7 @@ mod tests {
                         },
                         "secondary": null,
                         "credits": null,
+                        "individualLimit": null,
                         "planType": "plus",
                         "rateLimitReachedType": null
                     }
@@ -940,6 +979,31 @@ mod tests {
     }
 
     #[test]
+    fn verify_turn_moderation_metadata_notification_serialization() {
+        let notification =
+            ServerNotification::TurnModerationMetadata(TurnModerationMetadataNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                metadata: json!({"presentation": "inline"}),
+            });
+
+        let jsonrpc_notification = OutgoingMessage::AppServerNotification(notification);
+        assert_eq!(
+            json!({
+                "method": "turn/moderationMetadata",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "metadata": {"presentation": "inline"},
+                },
+            }),
+            serde_json::to_value(jsonrpc_notification)
+                .expect("ensure the notification serializes correctly"),
+            "ensure the notification serializes correctly"
+        );
+    }
+
+    #[test]
     fn server_request_response_from_result_decodes_typed_response() {
         let request = ServerRequest::CommandExecutionRequestApproval {
             request_id: RequestId::Integer(7),
@@ -949,6 +1013,7 @@ mod tests {
                 item_id: "item-1".to_string(),
                 started_at_ms: 0,
                 approval_id: None,
+                environment_id: None,
                 reason: None,
                 network_approval_context: None,
                 command: Some("echo hi".to_string()),
@@ -1231,6 +1296,7 @@ mod tests {
                     turn_id: "turn-1".to_string(),
                     item_id: "call-1".to_string(),
                     questions: vec![],
+                    auto_resolution_ms: None,
                 },
             ))
             .await;
@@ -1293,6 +1359,7 @@ mod tests {
                     turn_id: "turn-1".to_string(),
                     item_id: "call-1".to_string(),
                     questions: vec![],
+                    auto_resolution_ms: None,
                 },
             ))
             .await;

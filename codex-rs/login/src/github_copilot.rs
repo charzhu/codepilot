@@ -1,15 +1,15 @@
 use crate::auth::ExternalAuth;
+use crate::auth::ExternalAuthFuture;
 use crate::auth::ExternalAuthRefreshContext;
 use crate::auth::ExternalAuthTokens;
 use crate::default_client::build_reqwest_client;
 use crate::github_copilot_storage::GitHubCopilotAuth;
 use crate::github_copilot_storage::load_github_copilot_auth;
 use crate::github_copilot_storage::save_github_copilot_auth;
-use async_trait::async_trait;
 use chrono::DateTime;
 use chrono::TimeDelta;
 use chrono::Utc;
-use codex_app_server_protocol::AuthMode;
+use codex_protocol::auth::AuthMode;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -440,13 +440,6 @@ impl GitHubCopilotTokenRefresher {
         }
         Ok(Some(auth))
     }
-}
-
-#[async_trait]
-impl ExternalAuth for GitHubCopilotTokenRefresher {
-    fn auth_mode(&self) -> AuthMode {
-        AuthMode::ApiKey
-    }
 
     async fn resolve(&self) -> std::io::Result<Option<ExternalAuthTokens>> {
         Ok(self
@@ -474,6 +467,23 @@ impl ExternalAuth for GitHubCopilotTokenRefresher {
         Ok(ExternalAuthTokens::access_token_only(
             refreshed.copilot_access_token,
         ))
+    }
+}
+
+impl ExternalAuth for GitHubCopilotTokenRefresher {
+    fn auth_mode(&self) -> AuthMode {
+        AuthMode::ApiKey
+    }
+
+    fn resolve(&self) -> ExternalAuthFuture<'_, Option<ExternalAuthTokens>> {
+        Box::pin(GitHubCopilotTokenRefresher::resolve(self))
+    }
+
+    fn refresh(
+        &self,
+        context: ExternalAuthRefreshContext,
+    ) -> ExternalAuthFuture<'_, ExternalAuthTokens> {
+        Box::pin(GitHubCopilotTokenRefresher::refresh(self, context))
     }
 }
 

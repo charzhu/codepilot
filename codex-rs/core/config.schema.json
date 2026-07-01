@@ -102,6 +102,14 @@
       "additionalProperties": false,
       "description": "Config values for a single app/connector.",
       "properties": {
+        "approvals_reviewer": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            }
+          ],
+          "description": "Reviewer for approval prompts from this app, overriding the thread default."
+        },
         "default_tools_approval_mode": {
           "allOf": [
             {
@@ -202,6 +210,22 @@
       "additionalProperties": false,
       "description": "Default settings that apply to all apps.",
       "properties": {
+        "approvals_reviewer": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            }
+          ],
+          "description": "Reviewer for approval prompts unless overridden by per-app settings."
+        },
+        "default_tools_approval_mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/AppToolApproval"
+            }
+          ],
+          "description": "Approval mode for tools unless overridden by per-app or per-tool settings."
+        },
         "destructive_enabled": {
           "description": "Whether tools with `destructive_hint = true` are allowed by default.",
           "type": "boolean"
@@ -218,18 +242,6 @@
       },
       "type": "object"
     },
-    "AppsMcpPathOverrideConfigToml": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "path": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
     "AskForApproval": {
       "description": "Determines the conditions under which the user is consulted to approve running the command proposed by Codex.",
       "oneOf": [
@@ -237,13 +249,6 @@
           "description": "Under this policy, only \"known safe\" commands—as determined by `is_safe_command()`—that **only read files** are auto‑approved. Everything else will ask the user to approve.",
           "enum": [
             "untrusted"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "DEPRECATED: *All* commands are auto‑approved, but they are expected to run inside a sandbox where network access is disabled and writes are confined to a specific set of paths. If the command fails, it will be escalated to the user to approve execution without a sandbox. Prefer `OnRequest` for interactive runs or `Never` for non-interactive runs.",
-          "enum": [
-            "on-failure"
           ],
           "type": "string"
         },
@@ -347,6 +352,29 @@
       },
       "type": "object"
     },
+    "CodeModeConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "direct_only_tool_namespaces": {
+          "description": "Exact tool namespaces to expose only as direct model tools. These tools bypass deferral, remain top-level in code-mode-only sessions, and are omitted from the nested code-mode tool surface.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "excluded_tool_namespaces": {
+          "description": "Exact tool namespaces to omit from the code-mode nested tool surface.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ConfigProfile": {
       "additionalProperties": false,
       "description": "Collection of common configuration options that a user can define as a unit in `config.toml`.",
@@ -384,7 +412,23 @@
               "type": "boolean"
             },
             "apps_mcp_path_override": {
-              "$ref": "#/definitions/FeatureToml_for_AppsMcpPathOverrideConfigToml"
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
             },
             "auth_elicitation": {
               "type": "boolean"
@@ -395,13 +439,16 @@
             "browser_use_external": {
               "type": "boolean"
             },
-            "child_agents_md": {
+            "browser_use_full_cdp_access": {
               "type": "boolean"
             },
             "chronicle": {
               "type": "boolean"
             },
             "code_mode": {
+              "$ref": "#/definitions/FeatureToml_for_CodeModeConfigToml"
+            },
+            "code_mode_host": {
               "type": "boolean"
             },
             "code_mode_only": {
@@ -425,7 +472,13 @@
             "connectors": {
               "type": "boolean"
             },
+            "current_time_reminder": {
+              "$ref": "#/definitions/FeatureToml_for_CurrentTimeReminderConfigToml"
+            },
             "default_mode_request_user_input": {
+              "type": "boolean"
+            },
+            "deferred_executor": {
               "type": "boolean"
             },
             "elevated_windows_sandbox": {
@@ -473,13 +526,22 @@
             "image_generation": {
               "type": "boolean"
             },
+            "imagegenext": {
+              "type": "boolean"
+            },
             "in_app_browser": {
+              "type": "boolean"
+            },
+            "item_ids": {
               "type": "boolean"
             },
             "js_repl": {
               "type": "boolean"
             },
             "js_repl_tools_only": {
+              "type": "boolean"
+            },
+            "local_thread_store_compression": {
               "type": "boolean"
             },
             "memories": {
@@ -494,11 +556,17 @@
             "multi_agent": {
               "type": "boolean"
             },
+            "multi_agent_mode": {
+              "type": "boolean"
+            },
             "multi_agent_v2": {
               "$ref": "#/definitions/FeatureToml_for_MultiAgentV2ConfigToml"
             },
             "network_proxy": {
               "$ref": "#/definitions/FeatureToml_for_NetworkProxyConfigToml"
+            },
+            "non_prefixed_mcp_tool_names": {
+              "type": "boolean"
             },
             "personality": {
               "type": "boolean"
@@ -539,7 +607,10 @@
             "request_rule": {
               "type": "boolean"
             },
-            "responses_websocket_response_processed": {
+            "resize_all_images": {
+              "type": "boolean"
+            },
+            "respect_system_proxy": {
               "type": "boolean"
             },
             "responses_websockets": {
@@ -548,10 +619,16 @@
             "responses_websockets_v2": {
               "type": "boolean"
             },
+            "rollout_budget": {
+              "$ref": "#/definitions/FeatureToml_for_RolloutBudgetConfigToml"
+            },
             "runtime_metrics": {
               "type": "boolean"
             },
             "search_tool": {
+              "type": "boolean"
+            },
+            "secret_auth_storage": {
               "type": "boolean"
             },
             "shell_snapshot": {
@@ -572,6 +649,9 @@
             "sqlite": {
               "type": "boolean"
             },
+            "standalone_web_search": {
+              "type": "boolean"
+            },
             "steer": {
               "type": "boolean"
             },
@@ -580,6 +660,12 @@
             },
             "terminal_resize_reflow": {
               "type": "boolean"
+            },
+            "terminal_visualization_instructions": {
+              "type": "boolean"
+            },
+            "token_budget": {
+              "$ref": "#/definitions/FeatureToml_for_TokenBudgetConfigToml"
             },
             "tool_call_mcp_elicitation": {
               "type": "boolean"
@@ -603,6 +689,12 @@
               "type": "boolean"
             },
             "unified_exec": {
+              "type": "boolean"
+            },
+            "unified_exec_zsh_fork": {
+              "type": "boolean"
+            },
+            "use_agent_identity": {
               "type": "boolean"
             },
             "use_legacy_landlock": {
@@ -711,17 +803,59 @@
             }
           ],
           "default": null
-        },
-        "zsh_path": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/AbsolutePathBuf"
-            }
-          ],
-          "description": "Optional absolute path to patched zsh used by zsh-exec-bridge-backed shell execution."
         }
       },
       "type": "object"
+    },
+    "CurrentTimeReminderConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "clock_source": {
+          "$ref": "#/definitions/CurrentTimeSource"
+        },
+        "delivery_mode": {
+          "$ref": "#/definitions/CurrentTimeReminderDeliveryMode"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "reminder_interval_seconds": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "sleep_tool": {
+          "description": "Expose the input-interruptible `clock.sleep` tool.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CurrentTimeReminderDeliveryMode": {
+      "description": "Which inference boundaries may receive current-time reminders.",
+      "oneOf": [
+        {
+          "description": "Allow a reminder before any inference request once the interval is due.",
+          "enum": [
+            "any_inference"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Allow reminders after user input or tool output; new context windows still force one.",
+          "enum": [
+            "after_user_or_tool_output"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "CurrentTimeSource": {
+      "enum": [
+        "system",
+        "external"
+      ],
+      "type": "string"
     },
     "DebugConfigLockToml": {
       "additionalProperties": false,
@@ -758,6 +892,16 @@
       "properties": {
         "config_lockfile": {
           "$ref": "#/definitions/DebugConfigLockToml"
+        }
+      },
+      "type": "object"
+    },
+    "ExperimentalRequestUserInput": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -851,13 +995,23 @@
       },
       "type": "object"
     },
-    "FeatureToml_for_AppsMcpPathOverrideConfigToml": {
+    "FeatureToml_for_CodeModeConfigToml": {
       "anyOf": [
         {
           "type": "boolean"
         },
         {
-          "$ref": "#/definitions/AppsMcpPathOverrideConfigToml"
+          "$ref": "#/definitions/CodeModeConfigToml"
+        }
+      ]
+    },
+    "FeatureToml_for_CurrentTimeReminderConfigToml": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/definitions/CurrentTimeReminderConfigToml"
         }
       ]
     },
@@ -878,6 +1032,26 @@
         },
         {
           "$ref": "#/definitions/NetworkProxyConfigToml"
+        }
+      ]
+    },
+    "FeatureToml_for_RolloutBudgetConfigToml": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/definitions/RolloutBudgetConfigToml"
+        }
+      ]
+    },
+    "FeatureToml_for_TokenBudgetConfigToml": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/definitions/TokenBudgetConfigToml"
         }
       ]
     },
@@ -1344,6 +1518,9 @@
       },
       "type": "object"
     },
+    "LegacyAppPathString": {
+      "type": "string"
+    },
     "MarketplaceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -1410,6 +1587,25 @@
       },
       "type": "object"
     },
+    "McpServerAuth": {
+      "description": "Authentication flow Codex attempts after resolving an HTTP MCP server's configured bearer token and authorization headers, which always take precedence. ChatGPT authentication falls back to stored OAuth credentials when its session provider is unavailable; both modes ultimately fall back to an unauthenticated connection.",
+      "oneOf": [
+        {
+          "description": "Use stored MCP OAuth credentials when available. Starting an OAuth login is a separate operation.",
+          "enum": [
+            "oauth"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Use the current ChatGPT session for servers on the trusted first-party ChatGPT origin. If no ChatGPT session provider is available, startup can still fall back to stored OAuth credentials.",
+          "enum": [
+            "chatgpt"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "McpServerEnvVar": {
       "anyOf": [
         {
@@ -1465,6 +1661,10 @@
         "consolidation_model": {
           "description": "Model used for memory consolidation.",
           "type": "string"
+        },
+        "dedicated_tools": {
+          "description": "When `true`, expose dedicated memory tools through the extension tool surface.",
+          "type": "boolean"
         },
         "disable_on_external_context": {
           "description": "When `true`, external context sources mark the thread `memory_mode` as `\"polluted\"`.",
@@ -1744,6 +1944,7 @@
           "type": "string"
         },
         "usage_hint_enabled": {
+          "description": "Deprecated compatibility field. Its value is ignored.",
           "type": "boolean"
         },
         "usage_hint_text": {
@@ -1946,7 +2147,7 @@
     "NetworkProxyUnixSocketPermissionToml": {
       "enum": [
         "allow",
-        "none"
+        "deny"
       ],
       "type": "string"
     },
@@ -1998,7 +2199,7 @@
     "NetworkUnixSocketPermissionToml": {
       "enum": [
         "allow",
-        "none"
+        "deny"
       ],
       "type": "string"
     },
@@ -2121,6 +2322,29 @@
           "type": "string"
         }
       ]
+    },
+    "OrchestratorFeatureToml": {
+      "additionalProperties": false,
+      "description": "Settings for a feature owned by the orchestrator.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "OrchestratorToml": {
+      "additionalProperties": false,
+      "description": "Orchestrator-owned feature settings.",
+      "properties": {
+        "mcp": {
+          "$ref": "#/definitions/OrchestratorFeatureToml"
+        },
+        "skills": {
+          "$ref": "#/definitions/OrchestratorFeatureToml"
+        }
+      },
+      "type": "object"
     },
     "OtelConfigToml": {
       "additionalProperties": false,
@@ -2425,6 +2649,14 @@
           },
           "type": "array"
         },
+        "auth": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/McpServerAuth"
+            }
+          ],
+          "default": null
+        },
         "bearer_token_env_var": {
           "type": "string"
         },
@@ -2432,8 +2664,12 @@
           "type": "string"
         },
         "cwd": {
-          "default": null,
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/LegacyAppPathString"
+            }
+          ],
+          "default": null
         },
         "default_tools_approval_mode": {
           "allOf": [
@@ -2629,15 +2865,8 @@
       "type": "string"
     },
     "ReasoningEffort": {
-      "description": "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
-      "enum": [
-        "none",
-        "minimal",
-        "low",
-        "medium",
-        "high",
-        "xhigh"
-      ],
+      "description": "A non-empty reasoning effort value advertised by the model.",
+      "minLength": 1,
       "type": "string"
     },
     "ReasoningSummary": {
@@ -2659,6 +2888,38 @@
           "type": "string"
         }
       ]
+    },
+    "RolloutBudgetConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "limit_tokens": {
+          "format": "int64",
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        "prefill_token_weight": {
+          "format": "double",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reminder_at_remaining_tokens": {
+          "description": "Remaining weighted-token values that trigger reminders when crossed.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "sampling_token_weight": {
+          "format": "double",
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
     },
     "SandboxMode": {
       "enum": [
@@ -2823,6 +3084,32 @@
         }
       ]
     },
+    "TokenBudgetConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "guidance_message": {
+          "description": "Guidance appended to the context-window metadata in a developer message.",
+          "maxLength": 2000,
+          "type": "string"
+        },
+        "reminder_message_template": {
+          "description": "Reminder template. `{n_remaining}` is replaced with the tokens remaining before auto-compaction.",
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reminder_threshold_tokens": {
+          "description": "Number of tokens remaining before auto-compaction when the wrap-up reminder is emitted.",
+          "format": "int64",
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "ToolSuggestConfig": {
       "additionalProperties": false,
       "properties": {
@@ -2885,6 +3172,9 @@
     "ToolsToml": {
       "additionalProperties": false,
       "properties": {
+        "experimental_request_user_input": {
+          "$ref": "#/definitions/ExperimentalRequestUserInput"
+        },
         "web_search": {
           "allOf": [
             {
@@ -2942,7 +3232,8 @@
             "chat": {
               "decrease_reasoning_effort": null,
               "edit_queued_message": null,
-              "increase_reasoning_effort": null
+              "increase_reasoning_effort": null,
+              "interrupt_turn": null
             },
             "composer": {
               "history_search_next": null,
@@ -3010,6 +3301,7 @@
               "append_after_cursor": null,
               "append_line_end": null,
               "cancel_operator": null,
+              "change_to_line_end": null,
               "delete_char": null,
               "delete_to_line_end": null,
               "enter_insert": null,
@@ -3026,8 +3318,10 @@
               "open_line_above": null,
               "open_line_below": null,
               "paste_after": null,
+              "start_change_operator": null,
               "start_delete_operator": null,
               "start_yank_operator": null,
+              "substitute_char": null,
               "yank_line": null
             },
             "vim_operator": {
@@ -3042,7 +3336,20 @@
               "motion_word_backward": null,
               "motion_word_end": null,
               "motion_word_forward": null,
+              "select_around_text_object": null,
+              "select_inner_text_object": null,
               "yank_line": null
+            },
+            "vim_text_object": {
+              "backtick": null,
+              "big_word": null,
+              "braces": null,
+              "brackets": null,
+              "cancel": null,
+              "double_quote": null,
+              "parentheses": null,
+              "single_quote": null,
+              "word": null
             }
           },
           "description": "Keybinding overrides for the TUI.\n\nThis supports rebinding selected actions globally and by context. Context bindings take precedence over `global` bindings."
@@ -3260,6 +3567,14 @@
             }
           ],
           "description": "Increase the active reasoning effort."
+        },
+        "interrupt_turn": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Interrupt the active turn."
         }
       },
       "type": "object"
@@ -3571,7 +3886,8 @@
           "default": {
             "decrease_reasoning_effort": null,
             "edit_queued_message": null,
-            "increase_reasoning_effort": null
+            "increase_reasoning_effort": null,
+            "interrupt_turn": null
           }
         },
         "composer": {
@@ -3681,6 +3997,7 @@
             "append_after_cursor": null,
             "append_line_end": null,
             "cancel_operator": null,
+            "change_to_line_end": null,
             "delete_char": null,
             "delete_to_line_end": null,
             "enter_insert": null,
@@ -3697,8 +4014,10 @@
             "open_line_above": null,
             "open_line_below": null,
             "paste_after": null,
+            "start_change_operator": null,
             "start_delete_operator": null,
             "start_yank_operator": null,
+            "substitute_char": null,
             "yank_line": null
           }
         },
@@ -3720,7 +4039,27 @@
             "motion_word_backward": null,
             "motion_word_end": null,
             "motion_word_forward": null,
+            "select_around_text_object": null,
+            "select_inner_text_object": null,
             "yank_line": null
+          }
+        },
+        "vim_text_object": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TuiVimTextObjectKeymap"
+            }
+          ],
+          "default": {
+            "backtick": null,
+            "big_word": null,
+            "braces": null,
+            "brackets": null,
+            "cancel": null,
+            "double_quote": null,
+            "parentheses": null,
+            "single_quote": null,
+            "word": null
           }
         }
       },
@@ -3946,6 +4285,14 @@
           ],
           "description": "Cancel a pending operator and return to normal mode."
         },
+        "change_to_line_end": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Change from cursor to end of line and enter insert mode (`C`)."
+        },
         "delete_char": {
           "allOf": [
             {
@@ -4074,6 +4421,14 @@
           ],
           "description": "Paste after cursor (`p`)."
         },
+        "start_change_operator": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Begin change operator; next keys select a text object."
+        },
         "start_delete_operator": {
           "allOf": [
             {
@@ -4089,6 +4444,14 @@
             }
           ],
           "description": "Begin yank operator; next key selects motion (`y`)."
+        },
+        "substitute_char": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Delete character under cursor and enter insert mode (`s`)."
         },
         "yank_line": {
           "allOf": [
@@ -4193,6 +4556,22 @@
           ],
           "description": "Motion: to start of next word (`w`)."
         },
+        "select_around_text_object": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Select an around text object after an operator."
+        },
+        "select_inner_text_object": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Select an inner text object after an operator."
+        },
         "yank_line": {
           "allOf": [
             {
@@ -4200,6 +4579,85 @@
             }
           ],
           "description": "Repeat yank operator to yank the whole line (`yy`)."
+        }
+      },
+      "type": "object"
+    },
+    "TuiVimTextObjectKeymap": {
+      "additionalProperties": false,
+      "description": "Vim text-object keybindings for modal editing inside text areas.",
+      "properties": {
+        "backtick": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: backticks."
+        },
+        "big_word": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: whitespace-delimited WORD."
+        },
+        "braces": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: braces."
+        },
+        "brackets": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: brackets."
+        },
+        "cancel": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Cancel the pending text-object command."
+        },
+        "double_quote": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: double quotes."
+        },
+        "parentheses": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: parentheses."
+        },
+        "single_quote": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: single quotes."
+        },
+        "word": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Text object: word."
         }
       },
       "type": "object"
@@ -4263,6 +4721,7 @@
       "enum": [
         "disabled",
         "cached",
+        "indexed",
         "live"
       ],
       "type": "string"
@@ -4452,6 +4911,10 @@
       "description": "Experimental / do not use. Replaces the built-in realtime start instructions inserted into developer messages when realtime becomes active.",
       "type": "string"
     },
+    "experimental_realtime_webrtc_call_base_url": {
+      "description": "Experimental / do not use. Overrides only the WebRTC realtime call creation base URL. This is separate from `experimental_realtime_ws_base_url` because WebRTC call creation is HTTP, while sideband control is websocket.",
+      "type": "string"
+    },
     "experimental_realtime_ws_backend_prompt": {
       "description": "Experimental / do not use. Overrides only the realtime conversation websocket transport instructions (the `Op::RealtimeConversation` `/ws` session.update instructions) without changing normal prompts.",
       "type": "string"
@@ -4507,7 +4970,23 @@
           "type": "boolean"
         },
         "apps_mcp_path_override": {
-          "$ref": "#/definitions/FeatureToml_for_AppsMcpPathOverrideConfigToml"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            }
+          ]
         },
         "auth_elicitation": {
           "type": "boolean"
@@ -4518,13 +4997,16 @@
         "browser_use_external": {
           "type": "boolean"
         },
-        "child_agents_md": {
+        "browser_use_full_cdp_access": {
           "type": "boolean"
         },
         "chronicle": {
           "type": "boolean"
         },
         "code_mode": {
+          "$ref": "#/definitions/FeatureToml_for_CodeModeConfigToml"
+        },
+        "code_mode_host": {
           "type": "boolean"
         },
         "code_mode_only": {
@@ -4548,7 +5030,13 @@
         "connectors": {
           "type": "boolean"
         },
+        "current_time_reminder": {
+          "$ref": "#/definitions/FeatureToml_for_CurrentTimeReminderConfigToml"
+        },
         "default_mode_request_user_input": {
+          "type": "boolean"
+        },
+        "deferred_executor": {
           "type": "boolean"
         },
         "elevated_windows_sandbox": {
@@ -4596,13 +5084,22 @@
         "image_generation": {
           "type": "boolean"
         },
+        "imagegenext": {
+          "type": "boolean"
+        },
         "in_app_browser": {
+          "type": "boolean"
+        },
+        "item_ids": {
           "type": "boolean"
         },
         "js_repl": {
           "type": "boolean"
         },
         "js_repl_tools_only": {
+          "type": "boolean"
+        },
+        "local_thread_store_compression": {
           "type": "boolean"
         },
         "memories": {
@@ -4617,11 +5114,17 @@
         "multi_agent": {
           "type": "boolean"
         },
+        "multi_agent_mode": {
+          "type": "boolean"
+        },
         "multi_agent_v2": {
           "$ref": "#/definitions/FeatureToml_for_MultiAgentV2ConfigToml"
         },
         "network_proxy": {
           "$ref": "#/definitions/FeatureToml_for_NetworkProxyConfigToml"
+        },
+        "non_prefixed_mcp_tool_names": {
+          "type": "boolean"
         },
         "personality": {
           "type": "boolean"
@@ -4662,7 +5165,10 @@
         "request_rule": {
           "type": "boolean"
         },
-        "responses_websocket_response_processed": {
+        "resize_all_images": {
+          "type": "boolean"
+        },
+        "respect_system_proxy": {
           "type": "boolean"
         },
         "responses_websockets": {
@@ -4671,10 +5177,16 @@
         "responses_websockets_v2": {
           "type": "boolean"
         },
+        "rollout_budget": {
+          "$ref": "#/definitions/FeatureToml_for_RolloutBudgetConfigToml"
+        },
         "runtime_metrics": {
           "type": "boolean"
         },
         "search_tool": {
+          "type": "boolean"
+        },
+        "secret_auth_storage": {
           "type": "boolean"
         },
         "shell_snapshot": {
@@ -4695,6 +5207,9 @@
         "sqlite": {
           "type": "boolean"
         },
+        "standalone_web_search": {
+          "type": "boolean"
+        },
         "steer": {
           "type": "boolean"
         },
@@ -4703,6 +5218,12 @@
         },
         "terminal_resize_reflow": {
           "type": "boolean"
+        },
+        "terminal_visualization_instructions": {
+          "type": "boolean"
+        },
+        "token_budget": {
+          "$ref": "#/definitions/FeatureToml_for_TokenBudgetConfigToml"
         },
         "tool_call_mcp_elicitation": {
           "type": "boolean"
@@ -4726,6 +5247,12 @@
           "type": "boolean"
         },
         "unified_exec": {
+          "type": "boolean"
+        },
+        "unified_exec_zsh_fork": {
+          "type": "boolean"
+        },
+        "use_agent_identity": {
           "type": "boolean"
         },
         "use_legacy_landlock": {
@@ -4987,6 +5514,14 @@
       "description": "Base URL override for the built-in `openai` model provider.",
       "type": "string"
     },
+    "orchestrator": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/OrchestratorToml"
+        }
+      ],
+      "description": "Orchestrator-owned feature settings."
+    },
     "oss_provider": {
       "description": "Preferred OSS provider for local models, e.g. \"lmstudio\" or \"ollama\".",
       "type": "string"
@@ -5176,7 +5711,7 @@
           "$ref": "#/definitions/WebSearchMode"
         }
       ],
-      "description": "Controls the web search tool mode: disabled, cached, or live."
+      "description": "Controls the web search tool mode: disabled, cached, indexed, or live."
     },
     "windows": {
       "allOf": [
@@ -5186,14 +5721,6 @@
       ],
       "default": null,
       "description": "Windows-specific configuration."
-    },
-    "zsh_path": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/AbsolutePathBuf"
-        }
-      ],
-      "description": "Optional absolute path to patched zsh used by zsh-exec-bridge-backed shell execution."
     }
   },
   "title": "ConfigToml",
