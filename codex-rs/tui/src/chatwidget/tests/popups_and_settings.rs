@@ -2095,29 +2095,27 @@ async fn multi_agent_enable_prompt_updates_feature_and_emits_notice() {
 #[tokio::test]
 async fn fleet_status_board_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let main_thread_id =
-        ThreadId::from_string("00000000-0000-0000-0000-000000000001").expect("valid thread");
-    let worker_thread_id =
-        ThreadId::from_string("00000000-0000-0000-0000-000000000002").expect("valid thread");
+    let request = crate::fleet::FleetRunRequest::new(
+        "inspect async fleet result display".to_string(),
+        Some(2),
+    );
+    let mut snapshot = crate::fleet::initial_snapshot(&request);
+    snapshot.run_id = "12345678-0000-0000-0000-000000000000".to_string();
+    snapshot.status = crate::fleet::FleetRunStatus::Running;
+    snapshot.workers = vec![crate::fleet::FleetWorkerSnapshot {
+        id: "abcd1234-current-state".to_string(),
+        role: crate::fleet::FleetWorkerRole::Researcher,
+        goal: "Map the current state".to_string(),
+        depends_on: Vec::new(),
+        status: crate::fleet::FleetWorkerStatus::Running,
+        summary: String::new(),
+        details: String::new(),
+        thread_id: None,
+        turn_id: None,
+        duration_ms: None,
+    }];
 
-    chat.show_selection_view(crate::fleet::fleet_status_params(vec![
-        crate::fleet::FleetStatusThread {
-            thread_id: main_thread_id,
-            agent_nickname: None,
-            agent_role: None,
-            is_closed: false,
-            is_primary: true,
-            is_current: true,
-        },
-        crate::fleet::FleetStatusThread {
-            thread_id: worker_thread_id,
-            agent_nickname: Some("Scout".to_string()),
-            agent_role: Some("explorer".to_string()),
-            is_closed: true,
-            is_primary: false,
-            is_current: false,
-        },
-    ]));
+    chat.show_selection_view(crate::fleet::fleet_status_params(vec![&snapshot]));
 
     let popup = render_bottom_popup(&chat, /*width*/ 96);
     assert_chatwidget_snapshot!("fleet_status_board", popup);

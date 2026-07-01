@@ -138,8 +138,12 @@ pub(crate) enum KeymapEditIntent {
 pub(crate) enum AppEvent {
     /// Open the agent picker for switching active threads.
     OpenAgentPicker,
-    /// Open the fleet status board for active and completed agent threads.
+    /// Open the fleet status board for async workflow runs.
     OpenFleetStatus,
+    /// Open detail rows for one async fleet workflow run.
+    OpenFleetRunDetails {
+        run_id: String,
+    },
     /// Open the league status board for external agent CLI runs.
     OpenLeagueStatus,
     /// Open captured stdout/stderr for one league external-agent lane.
@@ -151,6 +155,18 @@ pub(crate) enum AppEvent {
     StartLeagueRun {
         request: codex_league::LeagueRunRequest,
         history_text: String,
+    },
+    /// Start an async fleet workflow run.
+    StartFleetRun {
+        request: crate::fleet::FleetRunRequest,
+    },
+    /// Update status for an async fleet workflow run.
+    FleetRunUpdated(crate::fleet::FleetRunSnapshot),
+    /// Complete an async fleet workflow run and display the final card.
+    FleetRunCompleted(crate::fleet::FleetRunSnapshot),
+    /// Cancel a fleet workflow run or worker.
+    CancelFleetRun {
+        target: String,
     },
     /// Update status for a league run.
     LeagueRunUpdated(codex_league::LeagueRunSnapshot),

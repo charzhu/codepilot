@@ -1859,8 +1859,18 @@ async fn expand_exec_prompt(prompt: String, config: &Config) -> anyhow::Result<S
             max_concurrent_agents: config.agent_max_threads,
         },
     );
-    if expansion.kind == FleetCommandKind::Run {
-        return Ok(expansion.model_text);
+    match expansion.kind {
+        FleetCommandKind::Run => return Ok(expansion.model_text),
+        FleetCommandKind::Status
+        | FleetCommandKind::List
+        | FleetCommandKind::Show
+        | FleetCommandKind::Cancel => {
+            anyhow::bail!(
+                "/fleet status, list, show, and cancel are only available in the interactive TUI"
+            )
+        }
+        FleetCommandKind::UsageError => anyhow::bail!(expansion.model_text),
+        FleetCommandKind::NotFleet => {}
     }
 
     expand_league_exec_prompt(prompt, config).await

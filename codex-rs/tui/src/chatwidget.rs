@@ -1425,6 +1425,10 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(crate) fn add_fleet_result(&mut self, snapshot: &crate::fleet::FleetRunSnapshot) {
+        self.add_plain_history_lines(crate::fleet::fleet_result_lines(snapshot));
+    }
+
     pub(crate) fn add_warning_message(&mut self, message: String) {
         self.add_to_history(history_cell::new_warning_event(message));
         self.request_redraw();

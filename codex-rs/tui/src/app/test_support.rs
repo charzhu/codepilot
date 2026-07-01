@@ -51,6 +51,8 @@ pub(super) async fn make_test_app() -> App {
         thread_event_channels: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
         agent_navigation: AgentNavigationState::default(),
+        fleet_runs: crate::fleet::FleetRunStore::default(),
+        fleet_cancellations: HashMap::new(),
         league_runs: crate::league::LeagueRunStore::default(),
         side_threads: HashMap::new(),
         active_thread_id: None,

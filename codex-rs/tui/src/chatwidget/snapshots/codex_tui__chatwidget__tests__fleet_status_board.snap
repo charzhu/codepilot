@@ -1,12 +1,13 @@
 ---
 source: tui/src/chatwidget/tests/popups_and_settings.rs
-assertion_line: 2316
+assertion_line: 2118
 expression: popup
 ---
   Fleet Status
-  Select an agent thread to inspect its transcript.
+  Async workflow runs and worker lanes.
 
-› 1. • Main [default] (current)  running · active · 00000000-0000-0000-0000-000000000001
-  2. • Scout [explorer]          closed · inactive · 00000000-0000-0000-0000-000000000002
+› 1. Run 12345678                           running · 1 workers · inspect async fleet result
+                                            display
+  2.   abcd1234-current-state [researcher]  running · no deps · Map the current state
 
   Press enter to confirm or esc to go back

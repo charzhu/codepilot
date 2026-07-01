@@ -19,7 +19,6 @@ use codex_protocol::fleet::FLEET_USAGE;
 use codex_protocol::fleet::FleetCommandKind;
 use codex_protocol::fleet::FleetPromptOptions;
 use codex_protocol::fleet::expand_fleet_prompt;
-use codex_protocol::fleet::fleet_task_offset;
 use codex_protocol::league::LEAGUE_USAGE;
 use codex_protocol::league::LeagueCommandKind;
 use codex_protocol::league::LeaguePromptOptions;
@@ -47,13 +46,6 @@ const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
 const LOGIN_USAGE: &str = "Usage: /login github-copilot";
-
-fn rebase_text_elements(elements: &[TextElement], offset: usize) -> Vec<TextElement> {
-    elements
-        .iter()
-        .map(|element| element.map_range(|range| (range.start + offset..range.end + offset).into()))
-        .collect()
-}
 
 fn trimmed_task_and_elements(
     text: &str,
@@ -166,7 +158,7 @@ impl ChatWidget {
         }
     }
 
-    fn handle_fleet_command_args(&mut self, user_message: UserMessage) {
+    pub(super) fn handle_fleet_command_args(&mut self, user_message: UserMessage) {
         let UserMessage {
             text,
             local_images,
@@ -175,44 +167,65 @@ impl ChatWidget {
             mention_bindings,
         } = user_message;
         let (task, task_elements) = trimmed_task_and_elements(&text, text_elements);
+        let _ = task_elements;
         let expansion = expand_fleet_prompt(&format!("/fleet {task}"), self.fleet_prompt_options());
 
         match expansion.kind {
             FleetCommandKind::Run => {
-                if self.bottom_pane.is_task_running() {
-                    self.add_to_history(history_cell::new_error_event(
-                        "'/fleet' cannot start a new task while another task is in progress."
-                            .to_string(),
-                    ));
-                    self.request_redraw();
-                    return;
-                }
                 if !self.config.features.enabled(Feature::Collab) {
                     self.open_multi_agent_enable_prompt();
                     return;
                 }
-                let model_text_elements = fleet_task_offset(&expansion.model_text)
-                    .map(|task_offset| rebase_text_elements(&task_elements, task_offset))
-                    .unwrap_or_default();
-                let history_text_elements = rebase_text_elements(&task_elements, "/fleet ".len());
-                let submitted = UserMessage {
-                    text: expansion.model_text,
-                    local_images,
-                    remote_image_urls,
-                    text_elements: model_text_elements,
-                    mention_bindings,
-                };
-                let history_record =
-                    UserMessageHistoryRecord::Override(UserMessageHistoryOverride {
-                        text: expansion.history_text,
-                        text_elements: history_text_elements,
-                    });
-                let _accepted =
-                    self.submit_user_message_with_history_record(submitted, history_record);
+                let mut request = crate::fleet::FleetRunRequest::new(
+                    expansion.task.clone(),
+                    self.config.agent_max_threads,
+                );
+                request.local_image_paths =
+                    local_images.into_iter().map(|image| image.path).collect();
+                request.remote_image_urls = remote_image_urls;
+                request.mention_context = mention_bindings
+                    .into_iter()
+                    .map(|binding| format!("{} -> {}", binding.mention, binding.path))
+                    .collect();
+                request.persistence_dir = Some(crate::fleet::fleet_persistence_dir(&self.config));
+                request.associated_goal_objective = self
+                    .current_goal_status
+                    .as_ref()
+                    .and_then(|goal| goal.active_objective())
+                    .map(str::to_string);
+                self.append_message_history_entry(expansion.history_text.clone());
+                self.app_event_tx.send(AppEvent::StartFleetRun { request });
             }
             FleetCommandKind::Status => {
+                if let Some(target) = expansion.target {
+                    self.app_event_tx
+                        .send(AppEvent::OpenFleetRunDetails { run_id: target });
+                } else {
+                    self.app_event_tx.send(AppEvent::OpenFleetStatus);
+                }
+                self.append_message_history_entry(expansion.history_text);
+            }
+            FleetCommandKind::List => {
                 self.app_event_tx.send(AppEvent::OpenFleetStatus);
                 self.append_message_history_entry(expansion.history_text);
+            }
+            FleetCommandKind::Show => {
+                if let Some(target) = expansion.target {
+                    self.app_event_tx
+                        .send(AppEvent::OpenFleetRunDetails { run_id: target });
+                    self.append_message_history_entry(expansion.history_text);
+                } else {
+                    self.app_event_tx.send(AppEvent::OpenFleetStatus);
+                    self.append_message_history_entry(expansion.history_text);
+                }
+            }
+            FleetCommandKind::Cancel => {
+                if let Some(target) = expansion.target {
+                    self.app_event_tx.send(AppEvent::CancelFleetRun { target });
+                    self.append_message_history_entry(expansion.history_text);
+                } else {
+                    self.add_error_message("Usage: /fleet cancel <run|worker>".to_string());
+                }
             }
             FleetCommandKind::UsageError => {
                 self.add_error_message(expansion.model_text);
@@ -735,8 +748,7 @@ impl ChatWidget {
             return;
         }
 
-        if ((cmd == SlashCommand::Fleet || cmd == SlashCommand::League)
-            && !trimmed.eq_ignore_ascii_case("status"))
+        if (cmd == SlashCommand::League && !trimmed.eq_ignore_ascii_case("status"))
             && self.bottom_pane.is_task_running()
         {
             let command = cmd.command();

@@ -63,6 +63,7 @@ use codex_app_server_protocol::ThreadGoalSetResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadInjectItemsParams;
 use codex_app_server_protocol::ThreadInjectItemsResponse;
+use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
@@ -102,8 +103,10 @@ use codex_app_server_protocol::ThreadUnsubscribeResponse;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnInterruptParams;
 use codex_app_server_protocol::TurnInterruptResponse;
+use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
+use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
@@ -112,6 +115,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::models::ActivePermissionProfile;
+use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_READ_ONLY;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelAvailabilityNux;
@@ -125,6 +129,9 @@ use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Duration;
+use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 const JSONRPC_INVALID_REQUEST: i64 = -32600;
@@ -191,6 +198,14 @@ impl ThreadParamsMode {
 pub(crate) struct AppServerStartedThread {
     pub(crate) session: ThreadSessionState,
     pub(crate) turns: Vec<Turn>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AppServerFleetWorkerTurnResult {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) turn_id: String,
+    pub(crate) text: String,
+    pub(crate) duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1126,6 +1141,167 @@ pub(crate) async fn start_thread_with_request_handle(
         .await
         .map_err(|err| bootstrap_request_error("thread/start failed during TUI bootstrap", err))?;
     started_thread_from_start_response(response, &config, thread_params_mode).await
+}
+
+pub(crate) async fn run_read_only_fleet_worker_turn(
+    request_handle: AppServerRequestHandle,
+    config: Config,
+    thread_params_mode: ThreadParamsMode,
+    remote_cwd_override: Option<PathBuf>,
+    prompt: String,
+    local_image_paths: Vec<PathBuf>,
+    remote_image_urls: Vec<String>,
+    timeout: Duration,
+    cancellation_token: CancellationToken,
+) -> Result<AppServerFleetWorkerTurnResult> {
+    let mut start_params = thread_start_params_from_config(
+        &config,
+        thread_params_mode,
+        remote_cwd_override.as_deref(),
+        /*session_start_source*/ None,
+    );
+    start_params.permissions = Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY.to_string());
+    start_params.sandbox = None;
+    start_params.approval_policy = Some(AskForApproval::Never);
+    start_params.ephemeral = Some(false);
+    start_params.thread_source = Some(ThreadSource::Subagent);
+    start_params.developer_instructions = Some(FLEET_WORKER_DEVELOPER_INSTRUCTIONS.to_string());
+
+    let start: ThreadStartResponse = request_handle
+        .request_typed(ClientRequest::ThreadStart {
+            request_id: RequestId::String(format!("fleet-thread-start-{}", Uuid::new_v4())),
+            params: start_params,
+        })
+        .await
+        .map_err(|err| bootstrap_request_error("thread/start failed for fleet worker", err))?;
+    let thread_id = ThreadId::from_string(&start.thread.id)
+        .map_err(|err| color_eyre::eyre::eyre!("invalid fleet worker thread id: {err}"))?;
+    let mut input = Vec::new();
+    for image_url in remote_image_urls {
+        input.push(UserInput::Image {
+            url: image_url,
+            detail: None,
+        });
+    }
+    for path in local_image_paths {
+        input.push(UserInput::LocalImage { path, detail: None });
+    }
+    input.push(UserInput::Text {
+        text: prompt,
+        text_elements: Vec::new(),
+    });
+
+    let turn: TurnStartResponse = request_handle
+        .request_typed(ClientRequest::TurnStart {
+            request_id: RequestId::String(format!("fleet-turn-start-{}", Uuid::new_v4())),
+            params: TurnStartParams {
+                thread_id: start.thread.id.clone(),
+                input,
+                responsesapi_client_metadata: None,
+                environments: None,
+                cwd: Some(config.cwd.to_path_buf()),
+                runtime_workspace_roots: Some(
+                    config
+                        .workspace_roots
+                        .iter()
+                        .map(AbsolutePathBuf::to_path_buf)
+                        .collect(),
+                ),
+                approval_policy: Some(AskForApproval::Never),
+                approvals_reviewer: approvals_reviewer_override_from_config(&config),
+                sandbox_policy: None,
+                permissions: Some(BUILT_IN_PERMISSION_PROFILE_READ_ONLY.to_string()),
+                model: config.model.clone(),
+                service_tier: service_tier_override_from_config(&config),
+                effort: config.model_reasoning_effort,
+                summary: config.model_reasoning_summary,
+                personality: None,
+                output_schema: None,
+                collaboration_mode: None,
+            },
+        })
+        .await
+        .wrap_err("turn/start failed for fleet worker")?;
+
+    let deadline = Instant::now() + timeout;
+    loop {
+        if Instant::now() >= deadline {
+            return Err(color_eyre::eyre::eyre!(
+                "fleet worker timed out after {}s",
+                timeout.as_secs()
+            ));
+        }
+        if cancellation_token.is_cancelled() {
+            let _ = request_handle
+                .request_typed::<TurnInterruptResponse>(ClientRequest::TurnInterrupt {
+                    request_id: RequestId::String(format!("fleet-turn-cancel-{}", Uuid::new_v4())),
+                    params: TurnInterruptParams {
+                        thread_id: start.thread.id.clone(),
+                        turn_id: turn.turn.id.clone(),
+                    },
+                })
+                .await;
+            return Err(color_eyre::eyre::eyre!("fleet worker cancelled"));
+        }
+
+        let read: ThreadReadResponse = request_handle
+            .request_typed(ClientRequest::ThreadRead {
+                request_id: RequestId::String(format!("fleet-thread-read-{}", Uuid::new_v4())),
+                params: ThreadReadParams {
+                    thread_id: start.thread.id.clone(),
+                    include_turns: true,
+                },
+            })
+            .await
+            .wrap_err("thread/read failed for fleet worker")?;
+        if let Some(completed_turn) = read
+            .thread
+            .turns
+            .iter()
+            .find(|candidate| candidate.id == turn.turn.id)
+            && completed_turn.status != TurnStatus::InProgress
+        {
+            let text = extract_agent_message_text(completed_turn);
+            if completed_turn.status == TurnStatus::Completed {
+                return Ok(AppServerFleetWorkerTurnResult {
+                    thread_id,
+                    turn_id: completed_turn.id.clone(),
+                    text,
+                    duration_ms: completed_turn.duration_ms,
+                });
+            }
+            let error = completed_turn
+                .error
+                .as_ref()
+                .map(|error| error.message.clone())
+                .unwrap_or_else(|| {
+                    format!("fleet worker turn ended as {:?}", completed_turn.status)
+                });
+            return Err(color_eyre::eyre::eyre!(error));
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+const FLEET_WORKER_DEVELOPER_INSTRUCTIONS: &str = r#"You are a read-only worker in an async /fleet workflow.
+Use available read/search/analysis tools to complete only your assigned lane.
+Do not edit files, apply patches, change git state, send messages, update memory, or request broader permissions.
+Return concise findings with evidence, confidence, and open questions."#;
+
+fn extract_agent_message_text(turn: &Turn) -> String {
+    if turn.items_view != TurnItemsView::Full {
+        return String::new();
+    }
+    turn.items
+        .iter()
+        .filter_map(|item| match item {
+            ThreadItem::AgentMessage { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+        .trim()
+        .to_string()
 }
 
 fn thread_realtime_start_params(

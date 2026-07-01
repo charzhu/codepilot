@@ -1736,6 +1736,9 @@ impl App {
             AppEvent::OpenFleetStatus => {
                 self.open_fleet_status(app_server).await;
             }
+            AppEvent::OpenFleetRunDetails { run_id } => {
+                self.open_fleet_run_details(run_id);
+            }
             AppEvent::OpenLeagueStatus => {
                 self.open_league_status();
             }
@@ -1770,6 +1773,78 @@ impl App {
                     Some("Use /league status to inspect progress.".to_string()),
                 );
             }
+            AppEvent::StartFleetRun { request } => {
+                let initial = crate::fleet::initial_snapshot(&request);
+                let run_id = initial.run_id.clone();
+                self.fleet_runs.upsert(initial);
+                let cancellation_token = tokio_util::sync::CancellationToken::new();
+                self.fleet_cancellations
+                    .insert(run_id.clone(), cancellation_token.clone());
+                let runner = std::sync::Arc::new(crate::fleet::AppServerFleetWorkflowRunner::new(
+                    app_server.request_handle(),
+                    self.config.clone(),
+                    app_server.thread_params_mode(),
+                    app_server
+                        .remote_cwd_override()
+                        .map(std::path::Path::to_path_buf),
+                ));
+                let app_event_tx = self.app_event_tx.clone();
+                let (update_tx, mut update_rx) = tokio::sync::mpsc::unbounded_channel();
+                tokio::spawn(async move {
+                    let forward_tx = app_event_tx.clone();
+                    let forwarder = tokio::spawn(async move {
+                        while let Some(snapshot) = update_rx.recv().await {
+                            forward_tx.send(AppEvent::FleetRunUpdated(snapshot));
+                        }
+                    });
+                    let final_snapshot = crate::fleet::run_fleet_workflow(
+                        request,
+                        runner,
+                        cancellation_token,
+                        Some(update_tx),
+                    )
+                    .await;
+                    let _ = forwarder.await;
+                    app_event_tx.send(AppEvent::FleetRunCompleted(final_snapshot));
+                });
+                self.chat_widget.add_info_message(
+                    format!(
+                        "Started /fleet workflow {}.",
+                        run_id.chars().take(8).collect::<String>()
+                    ),
+                    Some(format!(
+                        "Use /fleet status {} to inspect progress.",
+                        run_id.chars().take(8).collect::<String>()
+                    )),
+                );
+            }
+            AppEvent::FleetRunUpdated(snapshot) => {
+                self.fleet_runs.upsert(snapshot);
+            }
+            AppEvent::FleetRunCompleted(snapshot) => {
+                self.fleet_cancellations.remove(&snapshot.run_id);
+                if !self.fleet_runs.is_cancelled(&snapshot.run_id) {
+                    self.fleet_runs.upsert(snapshot.clone());
+                    self.chat_widget.add_fleet_result(&snapshot);
+                }
+            }
+            AppEvent::CancelFleetRun { target } => match self.fleet_runs.cancel(&target) {
+                Some(snapshot) => {
+                    if let Some(token) = self.fleet_cancellations.get(&snapshot.run_id) {
+                        token.cancel();
+                    }
+                    self.chat_widget.add_info_message(
+                        format!("Fleet cancel requested: {target}"),
+                        Some(format!(
+                            "Use /fleet show {} for details.",
+                            snapshot.run_id.chars().take(8).collect::<String>()
+                        )),
+                    );
+                }
+                None => self
+                    .chat_widget
+                    .add_error_message(format!("Fleet run or worker not found: {target}")),
+            },
             AppEvent::LeagueRunUpdated(snapshot) => {
                 self.league_runs.upsert(snapshot);
             }

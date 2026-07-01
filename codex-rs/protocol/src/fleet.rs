@@ -18,6 +18,9 @@ impl FleetPromptOptions {
 pub enum FleetCommandKind {
     Run,
     Status,
+    List,
+    Show,
+    Cancel,
     NotFleet,
     UsageError,
 }
@@ -27,9 +30,12 @@ pub struct FleetPromptExpansion {
     pub kind: FleetCommandKind,
     pub model_text: String,
     pub history_text: String,
+    pub task: String,
+    pub target: Option<String>,
 }
 
-pub const FLEET_USAGE: &str = "Usage: /fleet <task> or /fleet status";
+pub const FLEET_USAGE: &str =
+    "Usage: /fleet <task> | /fleet status [id] | list | show [id] | cancel <run|worker>";
 pub const FLEET_ORIGINAL_REQUEST_MARKER: &str = "Original user request:\n";
 
 pub fn fleet_task_offset(model_text: &str) -> Option<usize> {
@@ -45,6 +51,8 @@ pub fn expand_fleet_prompt(input: &str, options: FleetPromptOptions) -> FleetPro
             kind: FleetCommandKind::Status,
             model_text: String::new(),
             history_text: "/tasks".to_string(),
+            task: String::new(),
+            target: None,
         };
     }
 
@@ -53,6 +61,8 @@ pub fn expand_fleet_prompt(input: &str, options: FleetPromptOptions) -> FleetPro
             kind: FleetCommandKind::NotFleet,
             model_text: input.to_string(),
             history_text: input.to_string(),
+            task: String::new(),
+            target: None,
         };
     };
 
@@ -61,6 +71,8 @@ pub fn expand_fleet_prompt(input: &str, options: FleetPromptOptions) -> FleetPro
             kind: FleetCommandKind::NotFleet,
             model_text: input.to_string(),
             history_text: input.to_string(),
+            task: String::new(),
+            target: None,
         };
     }
 
@@ -70,14 +82,66 @@ pub fn expand_fleet_prompt(input: &str, options: FleetPromptOptions) -> FleetPro
             kind: FleetCommandKind::UsageError,
             model_text: FLEET_USAGE.to_string(),
             history_text: "/fleet".to_string(),
+            task: String::new(),
+            target: None,
         };
     }
 
-    if task.eq_ignore_ascii_case("status") {
+    let mut parts = task.splitn(2, char::is_whitespace);
+    let subcommand = parts.next().unwrap_or_default();
+    let target = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if subcommand.eq_ignore_ascii_case("status") {
+        let history_text = target
+            .map(|target| format!("/fleet status {target}"))
+            .unwrap_or_else(|| "/fleet status".to_string());
         return FleetPromptExpansion {
             kind: FleetCommandKind::Status,
             model_text: String::new(),
-            history_text: "/fleet status".to_string(),
+            history_text,
+            task: String::new(),
+            target: target.map(str::to_string),
+        };
+    }
+    if subcommand.eq_ignore_ascii_case("list") || subcommand.eq_ignore_ascii_case("ls") {
+        return FleetPromptExpansion {
+            kind: FleetCommandKind::List,
+            model_text: String::new(),
+            history_text: "/fleet list".to_string(),
+            task: String::new(),
+            target: None,
+        };
+    }
+    if subcommand.eq_ignore_ascii_case("show") {
+        let history_text = target
+            .map(|target| format!("/fleet show {target}"))
+            .unwrap_or_else(|| "/fleet show".to_string());
+        return FleetPromptExpansion {
+            kind: FleetCommandKind::Show,
+            model_text: String::new(),
+            history_text,
+            task: String::new(),
+            target: target.map(str::to_string),
+        };
+    }
+    if subcommand.eq_ignore_ascii_case("cancel") || subcommand.eq_ignore_ascii_case("stop") {
+        let Some(target) = target else {
+            return FleetPromptExpansion {
+                kind: FleetCommandKind::UsageError,
+                model_text: "Usage: /fleet cancel <run|worker>".to_string(),
+                history_text: "/fleet cancel".to_string(),
+                task: String::new(),
+                target: None,
+            };
+        };
+        return FleetPromptExpansion {
+            kind: FleetCommandKind::Cancel,
+            model_text: String::new(),
+            history_text: format!("/fleet cancel {target}"),
+            task: String::new(),
+            target: Some(target.to_string()),
         };
     }
 
@@ -86,6 +150,8 @@ pub fn expand_fleet_prompt(input: &str, options: FleetPromptOptions) -> FleetPro
         kind: FleetCommandKind::Run,
         model_text: fleet_prompt(task, options),
         history_text,
+        task: task.to_string(),
+        target: None,
     }
 }
 
@@ -176,6 +242,7 @@ mod tests {
 
         assert_eq!(expansion.kind, FleetCommandKind::Run);
         assert_eq!(expansion.history_text, "/fleet build the feature");
+        assert_eq!(expansion.task, "build the feature");
         assert!(expansion.model_text.contains("<fleet_mode>"));
         assert!(
             expansion
@@ -227,6 +294,21 @@ mod tests {
         assert_eq!(
             expand_fleet_prompt("/fleet status", options()).kind,
             FleetCommandKind::Status
+        );
+        let status_with_id = expand_fleet_prompt("/fleet status abc", options());
+        assert_eq!(status_with_id.kind, FleetCommandKind::Status);
+        assert_eq!(status_with_id.target.as_deref(), Some("abc"));
+        assert_eq!(
+            expand_fleet_prompt("/fleet list", options()).kind,
+            FleetCommandKind::List
+        );
+        assert_eq!(
+            expand_fleet_prompt("/fleet show abc", options()).kind,
+            FleetCommandKind::Show
+        );
+        assert_eq!(
+            expand_fleet_prompt("/fleet cancel abc", options()).kind,
+            FleetCommandKind::Cancel
         );
         assert_eq!(
             expand_fleet_prompt("/tasks", options()).kind,

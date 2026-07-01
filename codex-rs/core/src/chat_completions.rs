@@ -16,6 +16,8 @@ use std::hash::Hash;
 use std::hash::Hasher;
 
 const CHAT_COMPLETIONS_MAX_TOOL_NAME_BYTES: usize = 64;
+const DEFAULT_CHAT_COMPLETIONS_MAX_TOKENS: i64 = 16_384;
+const HARD_CHAT_COMPLETIONS_MAX_TOKENS: i64 = 32_768;
 
 #[derive(Debug, Clone)]
 pub(crate) struct ChatCompletionsRequest {
@@ -108,7 +110,7 @@ pub(crate) fn build_chat_completions_request(
         "messages": messages,
         "stream": true,
         "stream_options": {"include_usage": true},
-        "max_tokens": 4096,
+        "max_tokens": chat_completions_max_tokens(model_info),
     });
     if !tools.is_empty() {
         body["tools"] = Value::Array(tools);
@@ -118,6 +120,17 @@ pub(crate) fn build_chat_completions_request(
         }
     }
     Ok(ChatCompletionsRequest { body, tool_names })
+}
+
+fn chat_completions_max_tokens(model_info: &ModelInfo) -> i64 {
+    model_info
+        .resolved_context_window()
+        .map(|context_window| context_window / 4)
+        .unwrap_or(DEFAULT_CHAT_COMPLETIONS_MAX_TOKENS)
+        .clamp(
+            DEFAULT_CHAT_COMPLETIONS_MAX_TOKENS,
+            HARD_CHAT_COMPLETIONS_MAX_TOKENS,
+        )
 }
 
 fn append_chat_message(
@@ -516,5 +529,61 @@ mod tests {
                 {"role": "tool", "tool_call_id": "call_1", "content": "C:\\repo"}
             ])
         );
+    }
+
+    #[test]
+    fn chat_completions_request_uses_larger_default_output_cap() {
+        let prompt = Prompt {
+            input: vec![ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "write a detailed report".to_string(),
+                }],
+                phase: None,
+            }],
+            tools: vec![],
+            parallel_tool_calls: false,
+            base_instructions: BaseInstructions {
+                text: "You are helpful".to_string(),
+            },
+            personality: None,
+            output_schema: None,
+            output_schema_strict: true,
+        };
+
+        let request = build_chat_completions_request(&prompt, &test_model_info())
+            .expect("request should build");
+
+        assert_eq!(request.body["max_tokens"], json!(16_384));
+    }
+
+    #[test]
+    fn chat_completions_request_uses_context_aware_output_cap() {
+        let prompt = Prompt {
+            input: vec![ResponseItem::Message {
+                id: None,
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: "write a detailed report".to_string(),
+                }],
+                phase: None,
+            }],
+            tools: vec![],
+            parallel_tool_calls: false,
+            base_instructions: BaseInstructions {
+                text: "You are helpful".to_string(),
+            },
+            personality: None,
+            output_schema: None,
+            output_schema_strict: true,
+        };
+        let mut model = test_model_info();
+        model.context_window = Some(200_000);
+
+        let request =
+            build_chat_completions_request(&prompt, &model).expect("request should build");
+
+        assert_eq!(request.body["max_tokens"], json!(32_768));
     }
 }
