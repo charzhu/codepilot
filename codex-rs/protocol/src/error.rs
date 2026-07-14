@@ -81,6 +81,10 @@ pub enum CodexErr {
     #[error("stream disconnected before completion: {0}")]
     Stream(String, Option<Duration>),
     #[error(
+        "stream disconnected before completion: timeout waiting for first websocket response event"
+    )]
+    WebsocketFirstEventTimeout,
+    #[error(
         "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying."
     )]
     ContextWindowExceeded,
@@ -198,6 +202,7 @@ impl CodexErr {
             | CodexErr::ServerOverloaded
             | CodexErr::CyberPolicy { .. } => false,
             CodexErr::Stream(..)
+            | CodexErr::WebsocketFirstEventTimeout
             | CodexErr::Timeout
             | CodexErr::RequestTimeout
             | CodexErr::UnexpectedStatus(_)

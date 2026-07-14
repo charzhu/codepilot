@@ -3,8 +3,11 @@ use std::sync::Arc;
 
 use codex_api::Provider;
 use codex_api::SharedAuthProvider;
+use codex_http_client::ClientRouteClass;
+use codex_http_client::HttpClientFactory;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
+use codex_login::default_client::build_default_reqwest_client_for_route_async;
 use codex_login::github_copilot::GitHubCopilotTokenRefresher;
 use codex_login::github_copilot::load_or_refresh_github_copilot_auth;
 use codex_login::github_copilot_storage::load_github_copilot_auth;
@@ -223,6 +226,7 @@ impl GitHubCopilotModelsEndpoint {
     async fn list_models(
         &self,
         _client_version: &str,
+        http_client_factory: HttpClientFactory,
     ) -> CoreResult<(Vec<ModelInfo>, Option<String>)> {
         let Some(auth) = self.auth().await else {
             return Err(CodexErr::InvalidRequest(
@@ -237,11 +241,15 @@ impl GitHubCopilotModelsEndpoint {
             .to_api_provider(Some(auth.auth_mode()))?
             .headers;
         api_auth.add_auth_headers(&mut headers);
-        let response = codex_login::default_client::create_client()
-            .get(format!(
-                "{}/models",
-                self.base_url().await.trim_end_matches('/')
-            ))
+        let request_url = format!("{}/models", self.base_url().await.trim_end_matches('/'));
+        let client = build_default_reqwest_client_for_route_async(
+            http_client_factory,
+            request_url.clone(),
+            ClientRouteClass::Api,
+        )
+        .await?;
+        let response = client
+            .get(request_url)
             .headers(headers)
             .send()
             .await
@@ -283,10 +291,12 @@ impl ModelsEndpointClient for GitHubCopilotModelsEndpoint {
     fn list_models<'a>(
         &'a self,
         client_version: &'a str,
+        http_client_factory: HttpClientFactory,
     ) -> ModelsEndpointFuture<'a, CoreResult<(Vec<ModelInfo>, Option<String>)>> {
         Box::pin(GitHubCopilotModelsEndpoint::list_models(
             self,
             client_version,
+            http_client_factory,
         ))
     }
 }

@@ -140,10 +140,19 @@ async fn remote_environment_routes_encrypted_exec_server_rpc() -> Result<()> {
         .await
         .context("Noise harness client should connect")???;
 
+    #[cfg(windows)]
+    let command = vec![
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
+        "/C".to_string(),
+        "exit 0".to_string(),
+    ];
+    #[cfg(not(windows))]
+    let command = vec!["true".to_string()];
+
     let response = client
         .exec(ExecParams {
             process_id: ProcessId::from("proc-1"),
-            argv: vec!["true".to_string()],
+            argv: command,
             cwd: PathUri::from_host_native_path(std::env::current_dir()?)?,
             env_policy: None,
             env: HashMap::new(),

@@ -1,7 +1,7 @@
+use crate::auth::CodexAuth;
 use crate::auth::ExternalAuth;
 use crate::auth::ExternalAuthFuture;
 use crate::auth::ExternalAuthRefreshContext;
-use crate::auth::ExternalAuthTokens;
 use crate::default_client::build_reqwest_client;
 use crate::github_copilot_storage::GitHubCopilotAuth;
 use crate::github_copilot_storage::load_github_copilot_auth;
@@ -9,7 +9,6 @@ use crate::github_copilot_storage::save_github_copilot_auth;
 use chrono::DateTime;
 use chrono::TimeDelta;
 use chrono::Utc;
-use codex_protocol::auth::AuthMode;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -441,17 +440,17 @@ impl GitHubCopilotTokenRefresher {
         Ok(Some(auth))
     }
 
-    async fn resolve(&self) -> std::io::Result<Option<ExternalAuthTokens>> {
-        Ok(self
-            .load_or_refresh()
-            .await?
-            .map(|auth| ExternalAuthTokens::access_token_only(auth.copilot_access_token)))
+    async fn resolve(&self) -> std::io::Result<CodexAuth> {
+        let auth = self.load_or_refresh().await?.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "GitHub Copilot auth is not configured. Run `codex login github-copilot`.",
+            )
+        })?;
+        Ok(CodexAuth::from_api_key(&auth.copilot_access_token))
     }
 
-    async fn refresh(
-        &self,
-        _context: ExternalAuthRefreshContext,
-    ) -> std::io::Result<ExternalAuthTokens> {
+    async fn refresh(&self, _context: ExternalAuthRefreshContext) -> std::io::Result<CodexAuth> {
         let _permit =
             self.refresh_lock.acquire().await.map_err(|_| {
                 std::io::Error::other("GitHub Copilot token refresh lock is closed.")
@@ -464,25 +463,16 @@ impl GitHubCopilotTokenRefresher {
         })?;
         let refreshed = refresh_github_copilot_auth(&self.client, auth).await?;
         save_github_copilot_auth(&self.codex_home, &refreshed)?;
-        Ok(ExternalAuthTokens::access_token_only(
-            refreshed.copilot_access_token,
-        ))
+        Ok(CodexAuth::from_api_key(&refreshed.copilot_access_token))
     }
 }
 
 impl ExternalAuth for GitHubCopilotTokenRefresher {
-    fn auth_mode(&self) -> AuthMode {
-        AuthMode::ApiKey
-    }
-
-    fn resolve(&self) -> ExternalAuthFuture<'_, Option<ExternalAuthTokens>> {
+    fn resolve(&self) -> ExternalAuthFuture<'_, CodexAuth> {
         Box::pin(GitHubCopilotTokenRefresher::resolve(self))
     }
 
-    fn refresh(
-        &self,
-        context: ExternalAuthRefreshContext,
-    ) -> ExternalAuthFuture<'_, ExternalAuthTokens> {
+    fn refresh(&self, context: ExternalAuthRefreshContext) -> ExternalAuthFuture<'_, CodexAuth> {
         Box::pin(GitHubCopilotTokenRefresher::refresh(self, context))
     }
 }

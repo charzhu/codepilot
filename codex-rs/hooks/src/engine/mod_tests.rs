@@ -169,7 +169,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
                 matcher: Some("^Bash$".to_string()),
                 hooks: vec![HookHandlerConfig::Command {
                     command: format!("python3 {}", script_path.display()),
-                    command_windows: None,
+                    command_windows: Some(format!("python {}", script_path.display())),
                     timeout_sec: Some(10),
                     r#async: false,
                     status_message: Some("checking".to_string()),
@@ -1316,7 +1316,7 @@ print(json.dumps({
                 matcher: Some("Bash".to_string()),
                 hooks: vec![HookHandlerConfig::Command {
                     command: format!("python3 {}", script_path.display()),
-                    command_windows: None,
+                    command_windows: Some(format!("python {}", script_path.display())),
                     timeout_sec: Some(10),
                     r#async: false,
                     status_message: None,

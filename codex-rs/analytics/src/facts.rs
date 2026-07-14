@@ -200,7 +200,7 @@ impl From<&CodexErr> for CodexErrKind {
         match error {
             CodexErr::TurnAborted => CodexErrKind::TurnAborted,
             CodexErr::SessionBudgetExceeded => CodexErrKind::SessionBudgetExceeded,
-            CodexErr::Stream(..) => CodexErrKind::Stream,
+            CodexErr::Stream(..) | CodexErr::WebsocketFirstEventTimeout => CodexErrKind::Stream,
             CodexErr::ContextWindowExceeded => CodexErrKind::ContextWindowExceeded,
             CodexErr::ThreadNotFound(_) => CodexErrKind::ThreadNotFound,
             CodexErr::AgentLimitReached { .. } => CodexErrKind::AgentLimitReached,
@@ -579,8 +579,16 @@ pub(crate) struct PluginStateChangedInput {
     pub state: PluginState,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginInstallSource {
+    Manual,
+    ExternalAgentMigration,
+}
+
 pub(crate) struct PluginInstallFailedInput {
     pub plugin: PluginTelemetryMetadata,
+    pub source: PluginInstallSource,
     pub error_type: String,
 }
 

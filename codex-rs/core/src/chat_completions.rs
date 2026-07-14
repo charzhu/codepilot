@@ -291,9 +291,7 @@ fn chat_tools(
                 }
             }
             ToolSpec::WebSearch { .. } => {}
-            ToolSpec::ToolSearch { .. }
-            | ToolSpec::ImageGeneration { .. }
-            | ToolSpec::Freeform(_) => {
+            ToolSpec::ToolSearch { .. } | ToolSpec::Freeform(_) => {
                 return Err(CodexErr::InvalidRequest(format!(
                     "{} is not supported by GitHub Copilot Chat Completions models yet",
                     tool.name()
@@ -467,7 +465,7 @@ mod tests {
                 user_location: None,
                 search_context_size: None,
                 search_content_types: None,
-                index_gated_web_access: None,
+                indexed_web_access: None,
             }],
             &mut names,
             &test_model_info(),

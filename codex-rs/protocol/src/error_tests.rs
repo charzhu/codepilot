@@ -113,6 +113,11 @@ fn server_overloaded_maps_to_protocol() {
 }
 
 #[test]
+fn websocket_first_event_timeout_is_retryable() {
+    assert!(CodexErr::WebsocketFirstEventTimeout.is_retryable());
+}
+
+#[test]
 fn sandbox_denied_uses_aggregated_output_when_stderr_empty() {
     let output = ExecToolCallOutput {
         exit_code: 77,

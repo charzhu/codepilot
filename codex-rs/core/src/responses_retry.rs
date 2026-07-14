@@ -28,7 +28,9 @@ pub(crate) async fn handle_retryable_response_stream_error(
     turn_context: &TurnContext,
     request: ResponsesStreamRequest,
 ) -> Result<(), CodexErr> {
-    if *retries >= max_retries
+    let should_fallback_transport =
+        matches!(&err, CodexErr::WebsocketFirstEventTimeout) || *retries >= max_retries;
+    if should_fallback_transport
         && client_session.try_switch_fallback_transport(
             &turn_context.session_telemetry,
             &turn_context.model_info,

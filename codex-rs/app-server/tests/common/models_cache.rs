@@ -12,6 +12,8 @@ use codex_protocol::openai_models::default_input_modalities;
 use serde_json::json;
 use std::path::Path;
 
+const MODEL_CACHE_SCHEMA_VERSION: u32 = 3;
+
 /// Convert a ModelPreset to ModelInfo for cache storage.
 fn preset_to_info(preset: &ModelPreset, priority: i32) -> ModelInfo {
     ModelInfo {
@@ -95,7 +97,11 @@ pub fn write_models_cache_with_models(
     let cache_path = codex_home.join("models_cache.json");
     // DateTime<Utc> serializes to RFC3339 format by default with serde
     let fetched_at: DateTime<Utc> = Utc::now();
-    let client_version = client_version_to_whole();
+    let client_version = format!(
+        "{}:models-cache-v{}",
+        client_version_to_whole(),
+        MODEL_CACHE_SCHEMA_VERSION
+    );
     let cache = json!({
         "fetched_at": fetched_at,
         "etag": null,

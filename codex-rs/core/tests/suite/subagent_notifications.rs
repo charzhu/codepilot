@@ -40,10 +40,13 @@ use serde_json::Value;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 use std::time::Duration;
 use test_case::test_case;
 use tokio::time::Instant;
 use tokio::time::sleep;
+use tracing::Level;
+use tracing_test::internal::MockWriter;
 use wiremock::MockServer;
 
 const SPAWN_CALL_ID: &str = "spawn-call-1";
@@ -53,7 +56,7 @@ const TURN_0_FORK_PROMPT: &str = "seed fork context";
 const TURN_1_PROMPT: &str = "spawn a child and continue";
 const TURN_2_NO_WAIT_PROMPT: &str = "follow up without wait";
 const CHILD_PROMPT: &str = "child: do work";
-const INHERITED_MODEL: &str = "gpt-5.3-codex";
+const INHERITED_MODEL: &str = "gpt-5.2";
 const INHERITED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::XHigh;
 const REQUESTED_MODEL: &str = "gpt-5.4";
 const REQUESTED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Low;
@@ -62,6 +65,7 @@ const ROLE_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::High;
 const SUBAGENT_START_CONTEXT: &str = "subagent start context reaches child";
 const SUBAGENT_STOP_CONTINUATION: &str = "continue only the child";
 const INTERNAL_SUBAGENT_PROMPT: &str = "internal subagent: review";
+const HOOK_TEST_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn body_contains(req: &wiremock::Request, text: &str) -> bool {
     decoded_body(req)
@@ -95,6 +99,13 @@ fn decoded_body(req: &wiremock::Request) -> Option<Vec<u8>> {
     } else {
         Some(req.body.clone())
     }
+}
+
+fn log_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!("{name}=");
+    line.split_ascii_whitespace()
+        .find_map(|field| field.strip_prefix(&prefix))
+        .map(|value| value.trim_matches('"'))
 }
 
 fn has_subagent_notification(req: &ResponsesRequest) -> bool {
@@ -294,7 +305,7 @@ async fn wait_for_hook_log(
     filename: &str,
     expected_len: usize,
 ) -> Result<Vec<serde_json::Value>> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + HOOK_TEST_WAIT_TIMEOUT;
     loop {
         let inputs = read_hook_log(home, filename)?;
         if inputs.len() >= expected_len {
@@ -330,7 +341,7 @@ async fn wait_for_spawned_thread_id(test: &TestCodex) -> Result<String> {
 async fn wait_for_requests(
     mock: &core_test_support::responses::ResponseMock,
 ) -> Result<Vec<ResponsesRequest>> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + HOOK_TEST_WAIT_TIMEOUT;
     loop {
         let requests = mock.requests();
         if !requests.is_empty() {
@@ -654,9 +665,7 @@ async fn subagent_stop_replaces_stop_and_skips_internal_subagents() -> Result<()
     .await;
     let second_child_request = mount_sse_once_match(
         &server,
-        |req: &wiremock::Request| {
-            body_contains(req, SUBAGENT_STOP_CONTINUATION) && !body_contains(req, SPAWN_CALL_ID)
-        },
+        |req: &wiremock::Request| body_contains(req, SUBAGENT_STOP_CONTINUATION),
         sse(vec![
             ev_response_created("resp-child-2"),
             ev_assistant_message("msg-child-2", "child done final"),
@@ -667,7 +676,9 @@ async fn subagent_stop_replaces_stop_and_skips_internal_subagents() -> Result<()
 
     let _turn1_followup = mount_sse_once_match(
         &server,
-        |req: &wiremock::Request| body_contains(req, SPAWN_CALL_ID),
+        |req: &wiremock::Request| {
+            body_contains(req, SPAWN_CALL_ID) && !body_contains(req, SUBAGENT_STOP_CONTINUATION)
+        },
         sse(vec![
             ev_response_created("resp-turn1-2"),
             ev_assistant_message("msg-turn1-2", "parent done"),
@@ -691,9 +702,23 @@ async fn subagent_stop_replaces_stop_and_skips_internal_subagents() -> Result<()
             write_subagent_lifecycle_hooks(
                 home,
                 /*stop_prompts*/ &[SUBAGENT_STOP_CONTINUATION],
-                "",
+                ".*",
             )
             .expect("failed to write subagent hook fixture");
+            let hooks_path = home.join("hooks.json");
+            let mut hooks: Value = serde_json::from_slice(
+                &fs::read(&hooks_path).expect("failed to read subagent hook fixture"),
+            )
+            .expect("failed to parse subagent hook fixture");
+            hooks["hooks"]
+                .as_object_mut()
+                .expect("hooks fixture should contain an object")
+                .remove("UserPromptSubmit");
+            fs::write(
+                hooks_path,
+                serde_json::to_vec(&hooks).expect("failed to serialize subagent hook fixture"),
+            )
+            .expect("failed to update subagent hook fixture");
         })
         .with_config(|config| {
             trust_discovered_hooks(config);
@@ -707,6 +732,12 @@ async fn subagent_stop_replaces_stop_and_skips_internal_subagents() -> Result<()
 
     test.submit_turn(TURN_1_PROMPT).await?;
     let _ = wait_for_requests(&first_child_request).await?;
+    let _ = wait_for_hook_log(
+        test.codex_home_path(),
+        "subagent_stop_hook_log.jsonl",
+        /*expected_len*/ 1,
+    )
+    .await?;
     let _ = wait_for_requests(&second_child_request).await?;
 
     let subagent_stop_inputs = wait_for_hook_log(
@@ -1043,8 +1074,16 @@ async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Res
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn encrypted_multi_agent_v2_spawn_sends_agent_message_to_child() -> Result<()> {
+    let output: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_max_level(Level::INFO)
+        .with_writer(MockWriter::new(output))
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
     let server = start_mock_server().await;
     let encrypted_message = "opaque-encrypted-message";
     let spawn_args = serde_json::to_string(&json!({
@@ -1099,13 +1138,26 @@ async fn encrypted_multi_agent_v2_spawn_sends_agent_message_to_child() -> Result
             .expect("test config should allow feature update");
     });
     let test = builder.build(&server).await?;
+    let root_thread_id = test.session_configured.thread_id;
 
     test.submit_turn(TURN_1_PROMPT).await?;
 
-    let child_request = wait_for_requests(&child_request_log)
-        .await?
-        .pop()
-        .expect("child request");
+    // The response mock records candidate requests before its request matcher runs, so wait for
+    // the child request instead of assuming the latest recorded request is already it.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let child_request = loop {
+        if let Some(request) = child_request_log
+            .requests()
+            .into_iter()
+            .find(|request| !request.inputs_of_type("agent_message").is_empty())
+        {
+            break request;
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for child agent message request");
+        }
+        sleep(Duration::from_millis(10)).await;
+    };
     assert_eq!(
         strip_metadata_from_json(Value::Array(child_request.inputs_of_type("agent_message"))),
         Value::Array(vec![json!({
@@ -1124,6 +1176,41 @@ async fn encrypted_multi_agent_v2_spawn_sends_agent_message_to_child() -> Result
             ],
         })])
     );
+
+    let child_thread_id = test
+        .thread_manager
+        .list_thread_ids()
+        .await
+        .into_iter()
+        .find(|thread_id| *thread_id != root_thread_id)
+        .expect("child thread ID");
+    let logs = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let logs = String::from_utf8(output.lock().expect("buffer lock").clone())
+                .expect("logs should be UTF-8");
+            if logs.contains("kind=\"spawn\"") && logs.contains("state=\"receive\"") {
+                break logs;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("spawn communication logs should be emitted");
+    let send = logs
+        .lines()
+        .find(|line| line.contains("kind=\"spawn\"") && line.contains("state=\"send\""))
+        .expect("spawn send event");
+    assert!(send.contains(&format!("sender_thread_id={root_thread_id}")));
+    assert!(send.contains(&format!("receiver_thread_id={child_thread_id}")));
+    assert!(send.contains(&format!("content=\"{encrypted_message}\"")));
+
+    let communication_id = log_field(send, "communication_id").expect("communication ID");
+    logs.lines()
+        .find(|line| {
+            line.contains("state=\"receive\"")
+                && log_field(line, "communication_id") == Some(communication_id)
+        })
+        .expect("correlated receive event");
 
     Ok(())
 }

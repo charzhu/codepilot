@@ -22,4 +22,4 @@ verificationUrl: string,
 /**
  * One-time code the user must enter after signing in.
  */
-userCode: string, } | { "type": "chatgptAuthTokens", };
+userCode: string, } | { "type": "chatgptAuthTokens", } | { "type": "amazonBedrock", };

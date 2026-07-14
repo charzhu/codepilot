@@ -6,6 +6,7 @@ use tokio::process::Command;
 const CODEX_WINDOWS_INSTALLER_URL: &str =
     "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi";
 const CODEX_MICROSOFT_STORE_WEB_URL: &str = "https://apps.microsoft.com/detail/9plm9xgg6vks";
+const CODEX_WINDOWS_PACKAGE_NAME: &str = "OpenAI.Codex";
 
 pub async fn run_windows_app_open_or_install(
     workspace: PathBuf,
@@ -64,10 +65,13 @@ async fn link_codex_app_to_codepilot_cli(codepilot_cli_path: &Path) -> anyhow::R
 }
 
 async fn codex_app_is_installed() -> anyhow::Result<bool> {
+    let command = format!(
+        "Get-AppxPackage -Name '{CODEX_WINDOWS_PACKAGE_NAME}' | Select-Object -First 1 -ExpandProperty PackageFullName"
+    );
     let output = Command::new("powershell.exe")
         .arg("-NoProfile")
         .arg("-Command")
-        .arg("Get-StartApps -Name 'Codex' | Select-Object -First 1 -ExpandProperty AppID")
+        .arg(command)
         .output()
         .await
         .context("failed to invoke `powershell.exe`")?;
