@@ -9,6 +9,13 @@ fn map_api_error_maps_server_overloaded() {
 }
 
 #[test]
+fn map_api_error_preserves_websocket_first_event_timeout() {
+    let err = map_api_error(ApiError::WebsocketFirstEventTimeout);
+    assert!(matches!(err, CodexErr::WebsocketFirstEventTimeout));
+    assert!(err.is_retryable());
+}
+
+#[test]
 fn map_api_error_maps_server_overloaded_from_503_body() {
     let body = serde_json::json!({
         "error": {

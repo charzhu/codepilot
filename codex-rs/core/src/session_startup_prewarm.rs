@@ -22,6 +22,8 @@ use codex_otel::SessionTelemetry;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::BaseInstructions;
 
+const STARTUP_PREWARM_RESOLVE_GRACE: Duration = Duration::from_millis(250);
+
 pub(crate) struct SessionStartupPrewarmHandle {
     task: AbortOnDropHandle<CodexResult<ModelClientSession>>,
     started_at: Instant,
@@ -69,20 +71,22 @@ impl SessionStartupPrewarmHandle {
         } = self;
         let age_at_first_turn = started_at.elapsed();
         let remaining = timeout.saturating_sub(age_at_first_turn);
+        let resolve_grace = remaining.min(STARTUP_PREWARM_RESOLVE_GRACE);
 
         let resolution = if task.is_finished() {
             Self::resolution_from_join_result(task.await, started_at)
         } else {
             match tokio::select! {
                 _ = cancellation_token.cancelled() => None,
-                result = tokio::time::timeout(remaining, &mut task) => Some(result),
+                result = tokio::time::timeout(resolve_grace, &mut task) => Some(result),
             } {
                 Some(Ok(result)) => Self::resolution_from_join_result(result, started_at),
                 Some(Err(_elapsed)) => {
                     task.abort();
-                    info!("startup websocket prewarm timed out before the first turn could use it");
+                    let _ = task.await;
+                    info!("startup websocket prewarm was not ready when the first turn started");
                     SessionStartupPrewarmResolution::Unavailable {
-                        status: "timed_out",
+                        status: "not_ready",
                         prewarm_duration: Some(started_at.elapsed()),
                     }
                 }

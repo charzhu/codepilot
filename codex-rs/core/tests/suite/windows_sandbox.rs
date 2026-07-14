@@ -99,7 +99,10 @@ fn stage_windows_sandbox_helpers() -> anyhow::Result<()> {
             // A sandbox helper can briefly remain alive after the sandboxed
             // command exits. Bazel may retry the test while that process still
             // has the staged executable open, so keep the already-staged copy.
-            if err.kind() == std::io::ErrorKind::PermissionDenied && destination.exists() {
+            let destination_is_locked = matches!(err.raw_os_error(), Some(32 | 33));
+            if destination.exists()
+                && (err.kind() == std::io::ErrorKind::PermissionDenied || destination_is_locked)
+            {
                 continue;
             }
             return Err(err).with_context(|| {
@@ -200,6 +203,11 @@ async fn windows_restricted_token_rejects_exact_and_glob_deny_read_policy() -> a
 #[tokio::test]
 #[serial(codex_home)]
 async fn windows_elevated_enforces_deny_read_and_protects_setup_marker() -> anyhow::Result<()> {
+    if std::env::var_os("CI").is_none() {
+        eprintln!("skipping elevated Windows sandbox test outside CI because setup requires UAC");
+        return Ok(());
+    }
+
     let codex_home = codex_home_for_windows_sandbox_test("windows-elevated-deny-read-codex-home")?;
     let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
     stage_windows_sandbox_helpers()?;
@@ -208,7 +216,9 @@ async fn windows_elevated_enforces_deny_read_and_protects_setup_marker() -> anyh
     let glob_secret = cwd.join("secret.env");
     let exact_secret = cwd.join("exact-secret.txt");
     let public = cwd.join("public.txt");
+    let sandbox_temp = cwd.join("temp");
     let setup_marker = codex_home.path().join(".sandbox").join("setup_marker.json");
+    std::fs::create_dir(&sandbox_temp)?;
     std::fs::write(&glob_secret, "glob secret\n")?;
     std::fs::write(&exact_secret, "exact secret\n")?;
     std::fs::write(&public, "public ok\n")?;
@@ -261,7 +271,16 @@ async fn windows_elevated_enforces_deny_read_and_protects_setup_marker() -> anyh
             cwd: cwd.clone(),
             expiration: 10_000.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: HashMap::new(),
+            env: HashMap::from([
+                (
+                    "TEMP".to_string(),
+                    sandbox_temp.to_string_lossy().into_owned(),
+                ),
+                (
+                    "TMP".to_string(),
+                    sandbox_temp.to_string_lossy().into_owned(),
+                ),
+            ]),
             network: None,
             network_environment_id: None,
             sandbox_permissions: SandboxPermissions::UseDefault,

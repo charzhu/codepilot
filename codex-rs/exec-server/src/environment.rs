@@ -608,6 +608,14 @@ impl Environment {
         }
     }
 
+    /// Returns whether the environment can serve a request without waiting or reconnecting.
+    pub(crate) fn readiness_result(&self) -> Option<Result<(), ExecServerError>> {
+        match &self.remote_client {
+            Some(client) => client.readiness_result(),
+            None => Some(Ok(())),
+        }
+    }
+
     pub fn get_exec_backend(&self) -> Arc<dyn ExecBackend> {
         Arc::clone(&self.exec_backend)
     }
@@ -618,6 +626,14 @@ impl Environment {
 
     pub fn get_filesystem(&self) -> Arc<dyn ExecutorFileSystem> {
         Arc::clone(&self.filesystem)
+    }
+
+    /// Returns a filesystem view that fails instead of starting or waiting for a connection.
+    pub fn get_filesystem_without_reconnect(&self) -> Arc<dyn ExecutorFileSystem> {
+        match &self.remote_client {
+            Some(client) => Arc::new(RemoteFileSystem::new(client.fail_fast())),
+            None => Arc::clone(&self.filesystem),
+        }
     }
 }
 
@@ -649,6 +665,20 @@ mod tests {
             /*codex_linux_sandbox_exe*/ None,
         )
         .expect("runtime paths")
+    }
+
+    #[cfg(windows)]
+    fn successful_command() -> Vec<String> {
+        vec![
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
+            "/C".to_string(),
+            "exit 0".to_string(),
+        ]
+    }
+
+    #[cfg(not(windows))]
+    fn successful_command() -> Vec<String> {
+        vec!["true".to_string()]
     }
 
     fn assert_local_environment_unavailable(manager: &EnvironmentManager) {
@@ -1084,6 +1114,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selected_capability_inspection_keeps_stdio_environment_lazy() {
+        use codex_protocol::capabilities::CapabilityRootLocation;
+        use codex_protocol::capabilities::SelectedCapabilityRoot;
+
+        let environment = Environment::remote_with_transport(
+            ExecServerTransportParams::StdioCommand {
+                command: StdioExecServerCommand {
+                    program: "codex-missing-exec-server-for-test".to_string(),
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                    cwd: None,
+                },
+                initialize_timeout: Duration::from_secs(1),
+            },
+            /*local_runtime_paths*/ None,
+        );
+        let manager = EnvironmentManager::from_snapshot(
+            EnvironmentProviderSnapshot {
+                environments: vec![("stdio".to_string(), environment)],
+                default: EnvironmentDefault::Disabled,
+                include_local: false,
+            },
+            /*local_runtime_paths*/ None,
+        )
+        .expect("environment manager");
+        let environment = manager.get_environment("stdio").expect("stdio environment");
+        let selected_root = SelectedCapabilityRoot {
+            id: "demo@1".to_string(),
+            location: CapabilityRootLocation::Environment {
+                environment_id: "stdio".to_string(),
+                path: PathUri::parse("file:///plugins/demo").expect("plugin path URI"),
+            },
+        };
+
+        let status =
+            manager.inspect_selected_capability_roots(std::slice::from_ref(&selected_root));
+        assert!(status.ready_roots.is_empty());
+        assert_eq!(status.warnings, Vec::<String>::new());
+        assert!(!environment.startup_finished());
+
+        let missing_root = SelectedCapabilityRoot {
+            id: "missing@1".to_string(),
+            location: CapabilityRootLocation::Environment {
+                environment_id: "missing".to_string(),
+                path: PathUri::parse("file:///plugins/missing").expect("missing plugin path URI"),
+            },
+        };
+        let status = manager.inspect_selected_capability_roots(&[missing_root]);
+        assert!(status.ready_roots.is_empty());
+        assert_eq!(
+            status.warnings,
+            vec![
+                "selected capability root `missing@1` references unavailable environment `missing`"
+                    .to_string()
+            ]
+        );
+
+        assert!(environment.wait_until_ready().await.is_err());
+
+        let status = manager.inspect_selected_capability_roots(&[selected_root]);
+        assert!(status.ready_roots.is_empty());
+        assert_eq!(status.warnings.len(), 1);
+        assert!(status.warnings[0].contains("environment `stdio` is unavailable"));
+    }
+
+    #[tokio::test]
     async fn replacing_environment_stops_its_startup_task() {
         let first_listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -1163,7 +1259,7 @@ mod tests {
             .get_exec_backend()
             .start(crate::ExecParams {
                 process_id: ProcessId::from("default-env-proc"),
-                argv: vec!["true".to_string()],
+                argv: successful_command(),
                 cwd: PathUri::from_host_native_path(
                     std::env::current_dir().expect("read current dir"),
                 )
@@ -1203,7 +1299,7 @@ mod tests {
             .get_exec_backend()
             .start(crate::ExecParams {
                 process_id: ProcessId::from("local-sandbox-proc"),
-                argv: vec!["true".to_string()],
+                argv: successful_command(),
                 cwd: PathUri::from_host_native_path(
                     std::env::current_dir().expect("read current dir"),
                 )

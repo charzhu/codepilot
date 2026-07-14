@@ -744,7 +744,11 @@ mod tests {
         let stale_path = fixture
             .codex_home
             .path()
-            .join("sessions/2025/01/02/rollout-2025-01-02T12-00-00-00000000-0000-0000-0000-000000000003.jsonl");
+            .join("sessions")
+            .join("2025")
+            .join("01")
+            .join("02")
+            .join("rollout-2025-01-02T12-00-00-00000000-0000-0000-0000-000000000003.jsonl");
         fixture
             .insert_thread_row(
                 "00000000-0000-0000-0000-000000000002",
@@ -812,7 +816,12 @@ mod tests {
             let root = if archived {
                 self.codex_home.path().join("archived_sessions")
             } else {
-                self.codex_home.path().join("sessions/2025/01/02")
+                self.codex_home
+                    .path()
+                    .join("sessions")
+                    .join("2025")
+                    .join("01")
+                    .join("02")
             };
             std::fs::create_dir_all(&root).expect("rollout dir");
             let path = root.join(format!("rollout-{timestamp}-{thread_id}.jsonl"));
